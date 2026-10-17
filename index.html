@@ -3,47 +3,50 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Neo Pen – prova iPhone</title>
+<title>Neo Pen · iPhone</title>
 <style>
-  :root { --bg:#f6f3ee; --fg:#1f1c19; --muted:#6b645c; --accent:#b4572e; --card:#fffdf9; --line:#e2dbd1; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#1d1a17; --fg:#f2ede6; --muted:#a59d93; --accent:#e08a5f; --card:#272320; --line:#3a352f; } }
+  :root { --bg:#f6f3ee; --fg:#1f1c19; --muted:#6b645c; --accent:#b4572e; --card:#fffdf9; --line:#e2dbd1; --ok:#2e7d4f; --warn:#b4572e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1d1a17; --fg:#f2ede6; --muted:#a59d93; --accent:#e08a5f; --card:#272320; --line:#3a352f; --ok:#6fcf97; --warn:#e08a5f; } }
   * { box-sizing: border-box; }
   body { margin:0; padding:20px 16px 40px; font:16px/1.45 -apple-system, system-ui, sans-serif; background:var(--bg); color:var(--fg); }
-  h1 { font-size:22px; margin:0 0 4px; }
-  p { color:var(--muted); margin:0 0 16px; font-size:14px; }
+  h1 { font-size:22px; margin:0 0 14px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
-  button:disabled { opacity:.5; }
-  button, select { font:inherit; border-radius:10px; border:1px solid var(--line); padding:12px 14px; width:100%; margin-top:8px; background:var(--card); color:var(--fg); }
+  .state { text-align:center; padding:22px 14px; border-left:5px solid var(--line); }
+  .state.ok { border-left-color:var(--ok); } .state.warn { border-left-color:var(--warn); } .state.work { border-left-color:var(--accent); }
+  #stateMain { font-size:20px; font-weight:650; } #stateSub { color:var(--muted); font-size:14px; margin-top:4px; }
+  button, input { font:inherit; border-radius:10px; border:1px solid var(--line); padding:12px 14px; width:100%; margin-top:8px; background:var(--card); color:var(--fg); }
   button.main { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
-  #status { font-weight:600; }
-  ol { padding-left:20px; margin:6px 0 0; font-size:14px; color:var(--muted); }
-  pre { white-space:pre-wrap; font:12px/1.4 ui-monospace, Menlo, monospace; margin:0; max-height:55vh; overflow:auto; }
+  button:disabled { opacity:.5; }
+  .hide { display:none; }
+  label { display:block; font-size:13px; color:var(--muted); margin-top:10px; }
+  details summary { cursor:pointer; font-weight:600; }
+  pre { white-space:pre-wrap; font:12px/1.4 ui-monospace, Menlo, monospace; margin:8px 0 0; max-height:40vh; overflow:auto; }
   .row { display:flex; gap:8px; } .row button { margin-top:8px; }
 </style>
 </head>
 <body>
-  <h1>Neo Pen – prova iPhone</h1>
-  <p>Verifica se Bluefy riesce a leggere la penna da solo, anche con il telefono bloccato. Legge soltanto la memoria della penna: non cancella e non scrive niente.</p>
-  <div class="card">
-    <div>Stato: <span id="status">disconnesso</span></div>
-    <ol>
-      <li>Accendi la penna (chiudi Neo Studio sul telefono).</li>
-      <li>Tocca «Collega la penna» e, nell'elenco di Bluefy, scegli la penna. Aspetta «memoria letta».</li>
-      <li>Senza ricaricare la pagina, scegli ogni quanto riprovare e tocca «Avvia prova automatica».</li>
-      <li>Blocca il telefono e mettilo in tasca per 20–30 minuti, scrivendo ogni tanto sul quaderno.</li>
-      <li>Riapri, tocca «Copia registro» e incollamelo in chat.</li>
-    </ol>
-    <button id="connect" class="main">Collega la penna</button>
-    <button id="diag">Diagnostica Bluetooth</button>
-    <select id="every">
-      <option value="60">Riprova ogni minuto</option>
-      <option value="120" selected>Riprova ogni 2 minuti</option>
-      <option value="300">Riprova ogni 5 minuti</option>
-    </select>
-    <button id="start">Avvia prova automatica</button>
-    <div class="row"><button id="copy">Copia registro</button><button id="clear">Cancella registro</button></div>
+  <h1>Neo Pen · iPhone</h1>
+  <div class="card state idle" id="state"><div id="stateMain">Avvio…</div><div id="stateSub"></div></div>
+  <button id="choose" class="main hide">Scegli la penna</button>
+  <button id="go" class="main">Sincronizza ora</button>
+  <div class="card" style="margin-top:12px">
+    <details>
+      <summary>Impostazioni</summary>
+      <label for="url">Indirizzo dello script</label>
+      <input id="url" type="url" autocapitalize="off" autocorrect="off" placeholder="https://script.google.com/macros/s/…/exec">
+      <label for="secret">Chiave segreta</label>
+      <input id="secret" type="text" autocapitalize="off" autocorrect="off">
+      <div class="row"><button id="save">Salva e sincronizza</button><button id="test">Prova lo script</button></div>
+      <button id="forget">Rimanda tutte le pagine</button>
+    </details>
   </div>
-  <div class="card"><pre id="log"></pre></div>
+  <div class="card">
+    <details>
+      <summary>Registro</summary>
+      <div class="row"><button id="copy">Copia</button><button id="clear">Cancella</button></div>
+      <pre id="log"></pre>
+    </details>
+  </div>
   <script>"use strict";
 (() => {
   // vendor/web_pen_sdk/Util/Converter.ts
@@ -982,16 +985,16 @@
     return { SettingType: SettingType2, result };
   }
   function Password(packet) {
-    let status2 = packet.GetByte();
+    let status = packet.GetByte();
     let RetryCount = packet.GetByte();
     let ResetCount = packet.GetByte();
-    return { status: status2, RetryCount, ResetCount };
+    return { status, RetryCount, ResetCount };
   }
   function PasswordChange(packet) {
     let RetryCount = packet.GetByte();
     let ResetCount = packet.GetByte();
-    let status2 = packet.GetByte();
-    return { RetryCount, ResetCount, status: status2 };
+    let status = packet.GetByte();
+    return { RetryCount, ResetCount, status };
   }
   function PDS(packet) {
     let owner = packet.GetInt();
@@ -1035,7 +1038,7 @@
   var ProfileData = (packet) => {
     const profileName = packet.GetString(8);
     const ptype = packet.GetByte();
-    let status2 = 0;
+    let status = 0;
     let keyCount = 0;
     let key = "";
     let values = [];
@@ -1045,28 +1048,28 @@
     };
     switch (ptype) {
       case ProfileType.CreateProfile:
-        status2 = packet.GetByte();
-        result.status = "0x" + status2.toString(16);
+        status = packet.GetByte();
+        result.status = "0x" + status.toString(16);
         break;
       case ProfileType.DeleteProfile:
-        status2 = packet.GetByte();
-        result.status = "0x" + status2.toString(16);
+        status = packet.GetByte();
+        result.status = "0x" + status.toString(16);
         break;
       case ProfileType.InfoProfile:
-        status2 = packet.GetByte();
+        status = packet.GetByte();
         const allSectorCount = packet.GetShort();
         const sectorSize = packet.GetShort();
         const usedSectorCount = packet.GetShort();
         const usedKeySectorCount = packet.GetShort();
-        result.status = "0x" + status2.toString(16);
+        result.status = "0x" + status.toString(16);
         result.allSectorCount = allSectorCount, result.sectorSize = sectorSize, result.usedSectorCount = usedSectorCount, result.usedKeySectorCount = usedKeySectorCount;
         break;
       case ProfileType.WriteProfileValue:
         keyCount = packet.GetByte();
         for (let i2 = 0; i2 < keyCount; i2++) {
           key = packet.GetString(16);
-          status2 = packet.GetByte();
-          values.push({ key, status: "0x" + status2.toString(16) });
+          status = packet.GetByte();
+          values.push({ key, status: "0x" + status.toString(16) });
         }
         result.keyCount = keyCount, result.values = values;
         break;
@@ -1074,11 +1077,11 @@
         keyCount = packet.GetByte();
         for (let i2 = 0; i2 < keyCount; i2++) {
           key = packet.GetString(16);
-          status2 = packet.GetByte();
+          status = packet.GetByte();
           const dataLength = packet.GetShort();
           const data = packet.GetBytes(dataLength);
           const str = String.fromCharCode(...data);
-          values.push({ key, status: "0x" + status2.toString(16), dataLength, data: str });
+          values.push({ key, status: "0x" + status.toString(16), dataLength, data: str });
         }
         result.keyCount = keyCount, result.values = values;
         break;
@@ -1086,8 +1089,8 @@
         keyCount = packet.GetByte();
         for (let i2 = 0; i2 < keyCount; i2++) {
           key = packet.GetString(16);
-          status2 = packet.GetByte();
-          values.push({ key, status: "0x" + status2.toString(16) });
+          status = packet.GetByte();
+          values.push({ key, status: "0x" + status.toString(16) });
         }
         result.keyCount = keyCount, result.values = values;
         break;
@@ -1588,7 +1591,7 @@
   var wblk = function(dat, out, final, syms, lf, df, eb, li, bs, bl, p) {
     wbits(out, p++, final);
     ++lf[256];
-    var _a4 = hTree(lf, 15), dlt = _a4.t, mlb = _a4.l;
+    var _a5 = hTree(lf, 15), dlt = _a5.t, mlb = _a5.l;
     var _b2 = hTree(df, 15), ddt = _b2.t, mdb = _b2.l;
     var _c = lc(dlt), lclt = _c.c, nlc = _c.n;
     var _d = lc(ddt), lcdt = _d.c, ndc = _d.n;
@@ -2335,11 +2338,11 @@
           break;
         // MARK: CMD Firmware Response
         case CMD_default.FIRMWARE_UPLOAD_RESPONSE:
-          const status2 = packet.GetByte();
-          if (packet.Result !== 0 || status2 !== 0) {
+          const status = packet.GetByte();
+          if (packet.Result !== 0 || status !== 0) {
             this.IsUploading = false;
-            this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_FAILURE, status2);
-          } else if (status2 === 0) {
+            this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_FAILURE, status);
+          } else if (status === 0) {
             this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_STATUS, 0);
           }
           break;
@@ -2979,18 +2982,18 @@
      * @param {number} offset
      * @param {number} status - status: 0 = 시작 / 1 = 중간 / 2 = 끝 / 3 = Error
      */
-    ResponseChunkRequest(offset, status2) {
+    ResponseChunkRequest(offset, status) {
       const fwBf = this.penController.mClientV2.state.fwFile;
       const packetSize = this.penController.mClientV2.state.fwPacketSize;
       const data = fwBf.GetBytesWithOffset(offset, packetSize);
-      if (status2 === FirmwareStatusType.STATUS_START || status2 === FirmwareStatusType.STATUS_CONTINUE || status2 === FirmwareStatusType.STATUS_END) {
+      if (status === FirmwareStatusType.STATUS_START || status === FirmwareStatusType.STATUS_CONTINUE || status === FirmwareStatusType.STATUS_END) {
         this.IsUploading = true;
-        log("[FW] received pen upgrade status : " + status2);
-      } else if (status2 === FirmwareStatusType.STATUS_ERROR) {
+        log("[FW] received pen upgrade status : " + status);
+      } else if (status === FirmwareStatusType.STATUS_ERROR) {
         this.IsUploading = false;
         this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_FAILURE, null);
         log("[FW] received pen upgrade status : FW Error !!");
-        this.penController.RequestFirmwareUpload(offset, data, status2);
+        this.penController.RequestFirmwareUpload(offset, data, status);
         return;
       } else {
         this.IsUploading = false;
@@ -2998,16 +3001,16 @@
         log("[FW] received pen upgrade status : Unknown");
         return;
       }
-      if (status2 === FirmwareStatusType.STATUS_END) {
+      if (status === FirmwareStatusType.STATUS_END) {
         if (data !== null) {
-          this.penController.RequestFirmwareUpload(offset, data, status2);
+          this.penController.RequestFirmwareUpload(offset, data, status);
         }
         this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_STATUS, 100);
         this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_SUCCESS, null);
         this.IsUploading = false;
         return;
       } else {
-        this.penController.RequestFirmwareUpload(offset, data, status2);
+        this.penController.RequestFirmwareUpload(offset, data, status);
       }
       let maximum = fwBf.Size;
       if (maximum % packetSize == 0) {
@@ -3675,10 +3678,10 @@
      * @param {number} status
      * @returns
      */
-    async ReqPenSwUpload(offset, data, status2) {
+    async ReqPenSwUpload(offset, data, status) {
       const bf = new ByteUtil();
       bf.Put(Const_default.PK_STX, false).Put(CMD_default.FIRMWARE_PACKET_RESPONSE);
-      if (status2 === FirmwareStatusType.STATUS_ERROR) {
+      if (status === FirmwareStatusType.STATUS_ERROR) {
         bf.Put(1);
       } else {
         const beforeCompressSize = data.length;
@@ -4094,10 +4097,10 @@
      * @param {Uint8Array} data
      * @param {number} status
      */
-    RequestFirmwareUpload(offset, data, status2) {
+    RequestFirmwareUpload(offset, data, status) {
       this.Request(
         () => this.mClientV1.ReqPenSwUpload(),
-        () => this.mClientV2.ReqPenSwUpload(offset, data, status2)
+        () => this.mClientV2.ReqPenSwUpload(offset, data, status)
       );
     }
     OnConnected() {
@@ -4120,16 +4123,16 @@
       this.listeners = {};
     }
     on(event, fn) {
-      var _a4, _b2;
-      ((_b2 = (_a4 = this.listeners)[event]) != null ? _b2 : _a4[event] = /* @__PURE__ */ new Set()).add(fn);
+      var _a5, _b2;
+      ((_b2 = (_a5 = this.listeners)[event]) != null ? _b2 : _a5[event] = /* @__PURE__ */ new Set()).add(fn);
       return () => {
-        var _a5;
-        return (_a5 = this.listeners[event]) == null ? void 0 : _a5.delete(fn);
+        var _a6;
+        return (_a6 = this.listeners[event]) == null ? void 0 : _a6.delete(fn);
       };
     }
     emit(event, payload) {
-      var _a4;
-      (_a4 = this.listeners[event]) == null ? void 0 : _a4.forEach((fn) => {
+      var _a5;
+      (_a5 = this.listeners[event]) == null ? void 0 : _a5.forEach((fn) => {
         try {
           fn(payload);
         } catch (e) {
@@ -4186,8 +4189,8 @@
   var PEN_NAME = /neo|smartpen|nwp|m1|lamy/i;
   var sleep = (ms) => new Promise((r) => window.setTimeout(r, ms));
   function keyOf(dot) {
-    var _a4, _b2, _c, _d, _e, _f;
-    const p = (_a4 = dot.pageInfo) != null ? _a4 : {};
+    var _a5, _b2, _c, _d, _e, _f;
+    const p = (_a5 = dot.pageInfo) != null ? _a5 : {};
     return { section: (_b2 = p.section) != null ? _b2 : 0, owner: (_c = p.owner) != null ? _c : 0, note: (_e = (_d = p.book) != null ? _d : p.note) != null ? _e : 0, page: (_f = p.page) != null ? _f : 0 };
   }
   var PenConnection = class extends Emitter {
@@ -4223,12 +4226,12 @@
         this.controller.putData(Array.from(arr));
       };
       this.onGattDisconnected = () => {
-        var _a4;
+        var _a5;
         if (this.connecting) return;
         this.log("Penna disconnessa.");
         this.finishCurrentStroke();
         try {
-          (_a4 = this.controller) == null ? void 0 : _a4.OnDisconnected();
+          (_a5 = this.controller) == null ? void 0 : _a5.OnDisconnected();
         } catch {
         }
         this.cleanup();
@@ -4255,14 +4258,14 @@
     }
     /** Esegue le operazioni sulla penna una alla volta. */
     exclusive(fn) {
-      const run = this.op.then(fn, fn);
-      this.op = run.catch(() => void 0);
-      return run;
+      const run2 = this.op.then(fn, fn);
+      this.op = run2.catch(() => void 0);
+      return run2;
     }
     // ---------------------------------------------------------------- connessione
     /** Si collega e aspetta che la penna autorizzi la connessione. */
     async connect(opts = {}) {
-      var _a4, _b2, _c, _d, _e;
+      var _a5, _b2, _c, _d, _e;
       if (this.isConnected) return;
       const bt = navigator.bluetooth;
       if (!bt) throw new Error("Web Bluetooth non disponibile in questa versione di Obsidian.");
@@ -4276,7 +4279,7 @@
         this.setStatus({ state: "ricerca" });
         if (!opts.quiet) this.log("Cerco la penna\u2026 (accendila e tienila vicina; chiudi Neo Studio sul telefono)");
         try {
-          device2 = await this.requestPen((_a4 = opts.scanMs) != null ? _a4 : 3e4, !!opts.quiet);
+          device2 = await this.requestPen((_a5 = opts.scanMs) != null ? _a5 : 3e4, !!opts.quiet);
         } catch (e) {
           this.setStatus({ state: "disconnesso" });
           throw e;
@@ -4326,13 +4329,13 @@
     }
     /** Cerca la penna: prima tra quelle già permesse, poi con una ricerca Bluetooth. */
     async requestPen(scanMs, quiet) {
-      var _a4, _b2;
+      var _a5, _b2;
       const bt = navigator.bluetooth;
       try {
-        const known = (_b2 = await ((_a4 = bt.getDevices) == null ? void 0 : _a4.call(bt))) != null ? _b2 : [];
+        const known = (_b2 = await ((_a5 = bt.getDevices) == null ? void 0 : _a5.call(bt))) != null ? _b2 : [];
         const d = known.find((x2) => {
-          var _a5;
-          return PEN_NAME.test((_a5 = x2.name) != null ? _a5 : "");
+          var _a6;
+          return PEN_NAME.test((_a6 = x2.name) != null ? _a6 : "");
         });
         if (d) return d;
       } catch {
@@ -4351,8 +4354,8 @@
         let last = null;
         for (const opts of variants) {
           try {
-            const run = () => bt.requestDevice(opts);
-            return this.gesture ? await this.gesture(run) : await run();
+            const run2 = () => bt.requestDevice(opts);
+            return this.gesture ? await this.gesture(run2) : await run2();
           } catch (e) {
             last = e;
             if (/cancel|NotFoundError|abort/i.test(`${e == null ? void 0 : e.name} ${e == null ? void 0 : e.message}`)) break;
@@ -4397,23 +4400,23 @@
       if (!char) return;
       const buf = new Uint8Array(data);
       this.writeChain = this.writeChain.then(() => char.writeValue(buf)).catch(async (e) => {
-        var _a4;
+        var _a5;
         await sleep(300);
         try {
           await char.writeValue(buf);
         } catch {
-          this.log(`Scrittura verso la penna fallita: ${(_a4 = e == null ? void 0 : e.message) != null ? _a4 : e}`);
+          this.log(`Scrittura verso la penna fallita: ${(_a5 = e == null ? void 0 : e.message) != null ? _a5 : e}`);
         }
       });
     }
     disconnect() {
-      var _a4, _b2;
-      if ((_b2 = (_a4 = this.device) == null ? void 0 : _a4.gatt) == null ? void 0 : _b2.connected) this.device.gatt.disconnect();
+      var _a5, _b2;
+      if ((_b2 = (_a5 = this.device) == null ? void 0 : _a5.gatt) == null ? void 0 : _b2.connected) this.device.gatt.disconnect();
       else this.cleanup();
     }
     cleanup() {
-      var _a4, _b2, _c;
-      (_a4 = this.notifyChar) == null ? void 0 : _a4.removeEventListener("characteristicvaluechanged", this.onNotify);
+      var _a5, _b2, _c;
+      (_a5 = this.notifyChar) == null ? void 0 : _a5.removeEventListener("characteristicvaluechanged", this.onNotify);
       (_b2 = this.device) == null ? void 0 : _b2.removeEventListener("gattserverdisconnected", this.onGattDisconnected);
       this.device = null;
       this.controller = null;
@@ -4430,8 +4433,8 @@
       this.emit("status", this.status);
     }
     inputPassword(pw) {
-      var _a4;
-      (_a4 = this.controller) == null ? void 0 : _a4.InputPassword(pw);
+      var _a5;
+      (_a5 = this.controller) == null ? void 0 : _a5.InputPassword(pw);
     }
     // ---------------------------------------------------------------- messaggi SDK
     /** Aspetta un messaggio della penna che soddisfi `match` (type -1 = disconnessa, -2 = tempo scaduto). */
@@ -4440,17 +4443,17 @@
         const w = {
           match,
           resolve: (v) => {
-            window.clearTimeout(timer2);
+            window.clearTimeout(timer);
             this.waiters = this.waiters.filter((x2) => x2 !== w);
             resolve(v);
           }
         };
-        const timer2 = window.setTimeout(() => w.resolve({ type: -2, args: null }), ms);
+        const timer = window.setTimeout(() => w.resolve({ type: -2, args: null }), ms);
         this.waiters.push(w);
       });
     }
     onMessage(type, args) {
-      var _a4, _b2, _c, _d, _e, _f;
+      var _a5, _b2, _c, _d, _e, _f;
       switch (type) {
         case PenMessageType_default.PEN_SETTING_INFO:
           this.setStatus({
@@ -4461,7 +4464,7 @@
           break;
         case PenMessageType_default.PEN_PASSWORD_REQUEST:
           this.log("La penna \xE8 protetta da password.");
-          this.emit("passwordRequest", { retry: (_a4 = args == null ? void 0 : args.RetryCount) != null ? _a4 : 0, reset: (_b2 = args == null ? void 0 : args.ResetCount) != null ? _b2 : 0 });
+          this.emit("passwordRequest", { retry: (_a5 = args == null ? void 0 : args.RetryCount) != null ? _a5 : 0, reset: (_b2 = args == null ? void 0 : args.ResetCount) != null ? _b2 : 0 });
           break;
         case PenMessageType_default.PEN_AUTHORIZED: {
           const info = (_c = this.controller) == null ? void 0 : _c.info;
@@ -4509,13 +4512,13 @@
     // Le coordinate vere e la pagina giusta arrivano con i PEN_MOVE; il PEN_UP è una
     // copia dell'ultimo punto. Quindi: chiave e punti si prendono solo dai MOVE validi.
     onDot(dot) {
-      var _a4, _b2, _c, _d;
+      var _a5, _b2, _c, _d;
       const type = dot.dotType;
       if (type === DOT_DOWN) {
         this.finishCurrentStroke();
         this.current = {
           key: { section: -1, owner: -1, note: -1, page: -1 },
-          stroke: { t: dot.timeStamp || Date.now(), tip: (_a4 = dot.penTipType) != null ? _a4 : 0, color: (_b2 = dot.color) != null ? _b2 : 0, pts: [] }
+          stroke: { t: dot.timeStamp || Date.now(), tip: (_a5 = dot.penTipType) != null ? _a5 : 0, color: (_b2 = dot.color) != null ? _b2 : 0, pts: [] }
         };
         return;
       }
@@ -4548,7 +4551,7 @@
     // ---------------------------------------------------------------- memoria della penna
     /** Elenco delle pagine salvate nella memoria della penna. */
     async listMemory() {
-      var _a4;
+      var _a5;
       const c = this.controller;
       if (!c || !this.isConnected) throw new Error("penna non collegata");
       const wNotes = this.waitMsg((t) => t === PenMessageType_default.OFFLINE_DATA_NOTE_LIST, 1e4);
@@ -4564,7 +4567,7 @@
         c.RequestOfflinePageList(n.Section, n.Owner, n.Note);
         const r = await wPages;
         if (r.type === -1) throw new Error("penna disconnessa");
-        const pages = Array.isArray((_a4 = r.args) == null ? void 0 : _a4.Pages) ? r.args.Pages : [];
+        const pages = Array.isArray((_a5 = r.args) == null ? void 0 : _a5.Pages) ? r.args.Pages : [];
         for (const page of pages) out.push({ section: n.Section, owner: n.Owner, note: n.Note, page });
       }
       return out.filter(validKey).sort((a, b) => a.note - b.note || a.page - b.page);
@@ -4574,7 +4577,7 @@
      * Se `decide` risponde false (pagina invariata), il trasferimento viene interrotto subito.
      */
     async downloadPage(key, decide) {
-      var _a4, _b2, _c;
+      var _a5, _b2, _c;
       const c = this.controller;
       if (!c || !this.isConnected) throw new Error("penna non collegata");
       const isStart = (t) => t === PenMessageType_default.OFFLINE_DATA_SEND_START || t === PenMessageType_default.OFFLINE_DATA_SEND_FAILURE;
@@ -4587,7 +4590,7 @@
         const first = await wStart;
         if (first.type === -1) throw new Error("penna disconnessa");
         if (first.type !== PenMessageType_default.OFFLINE_DATA_SEND_START) return { key, count: 0, strokes: [] };
-        const count = Number((_a4 = first.args) == null ? void 0 : _a4.stroke);
+        const count = Number((_a5 = first.args) == null ? void 0 : _a5.stroke);
         const known = Number.isFinite(count) ? count : -1;
         const size = Number((_b2 = first.args) == null ? void 0 : _b2.bytes);
         const bytes = Number.isFinite(size) ? size : -1;
@@ -4618,7 +4621,7 @@
      * (più quelle chieste da `plan.extra`). Non cancella nulla dalla penna.
      */
     async sync(plan) {
-      var _a4, _b2;
+      var _a5, _b2;
       this.setStatus({ state: "scaricamento" });
       try {
         const memory = await this.listMemory();
@@ -4631,7 +4634,7 @@
         }
         const have = new Set(downloaded.map((d) => pageId(d.key)));
         const inPen = new Set(memory.map(pageId));
-        for (const key of (_b2 = (_a4 = plan.extra) == null ? void 0 : _a4.call(plan, downloaded.map((d) => d.key))) != null ? _b2 : []) {
+        for (const key of (_b2 = (_a5 = plan.extra) == null ? void 0 : _a5.call(plan, downloaded.map((d) => d.key))) != null ? _b2 : []) {
           const id = pageId(key);
           if (have.has(id) || !inPen.has(id)) continue;
           const r = await this.downloadPage(key);
@@ -4683,10 +4686,10 @@
       }
     }
     onOfflineStrokes(strokes) {
-      var _a4, _b2, _c;
+      var _a5, _b2, _c;
       if (!this.collecting) return;
       for (const s of strokes) {
-        const dots = (_a4 = s.Dots) != null ? _a4 : [];
+        const dots = (_a5 = s.Dots) != null ? _a5 : [];
         if (!dots.length) continue;
         const first = dots[0];
         const stroke = {
@@ -4720,10 +4723,8 @@
     });
   }
 
-  // mobile/test.ts
+  // mobile/sync.ts
   var $ = (id) => document.getElementById(id);
-  var LOG_KEY = "neopen-prova-registro";
-  var COUNT_KEY = "neopen-prova-conteggi";
   var store = {
     get(k) {
       try {
@@ -4739,40 +4740,70 @@
       }
     }
   };
+  var SVC = ["000019f1-0000-1000-8000-00805f9b34fb", "4f99f138-9d53-5bfa-9e50-b147491afe68"];
+  var VERSION = "4";
+  var LOG_KEY = "neopen-sync-registro";
   var _a2;
   var lines = JSON.parse((_a2 = store.get(LOG_KEY)) != null ? _a2 : "[]");
-  var show = () => {
+  var log2 = (m) => {
+    lines.push(`${(/* @__PURE__ */ new Date()).toLocaleTimeString("it-IT")}  ${m}`);
+    if (lines.length > 400) lines = lines.slice(-400);
+    store.set(LOG_KEY, JSON.stringify(lines));
     $("log").textContent = lines.slice().reverse().join("\n");
   };
-  var log2 = (m) => {
-    const t = (/* @__PURE__ */ new Date()).toLocaleTimeString("it-IT");
-    lines.push(`${t}  ${m}`);
-    if (lines.length > 600) lines = lines.slice(-600);
-    store.set(LOG_KEY, JSON.stringify(lines));
-    show();
-  };
-  var status = (m) => $("status").textContent = m;
-  var where = () => document.visibilityState === "visible" ? "app davanti" : "app in BACKGROUND";
+  var where = () => document.visibilityState === "visible" ? "davanti" : "BACKGROUND";
+  var CFG_KEY = "neopen-sync-config";
+  var _a3;
+  var cfg = JSON.parse((_a3 = store.get(CFG_KEY)) != null ? _a3 : '{"url":"","secret":""}');
+  try {
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (h.get("u") && h.get("s")) {
+      cfg = { url: h.get("u"), secret: h.get("s") };
+      store.set(CFG_KEY, JSON.stringify(cfg));
+      history.replaceState(null, "", location.pathname + location.search);
+    }
+  } catch {
+  }
+  $("url").value = cfg.url;
+  $("secret").value = cfg.secret;
+  var hasCfg = () => /^https:\/\/script\.google\.com\/.+\/exec/.test(cfg.url) && cfg.secret.length > 8;
+  function show(kind, main, sub = "") {
+    const box = $("state");
+    box.className = `state ${kind}`;
+    $("stateMain").textContent = main;
+    $("stateSub").textContent = sub;
+  }
+  async function relay(r) {
+    var _a5;
+    const res = await fetch(cfg.url, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ secret: cfg.secret, relay: r })
+    });
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error("lo script non ha risposto come previsto (controlla l'indirizzo e che sia pubblicato per \xABChiunque\xBB)");
+    }
+    if (!(data == null ? void 0 : data.ok)) throw new Error((data == null ? void 0 : data.error) === "secret" ? "la chiave segreta non corrisponde" : String((_a5 = data == null ? void 0 : data.error) != null ? _a5 : "errore dello script"));
+    if (Array.isArray(data.results)) throw new Error("lo script sul PC \xE8 una versione vecchia: aggiornalo da Obsidian (Impostazioni \u2192 Neo Pen \u2192 Calendario)");
+    return data;
+  }
   var chooser = { available: true, cancel() {
   }, setQuiet() {
   }, dispose() {
   } };
   var pen = new PenConnection(chooser);
   pen.on("log", (m) => log2(`penna: ${m}`));
-  pen.on("status", (s) => status(`${s.state}${s.name ? " \xB7 " + s.name : ""}`));
-  pen.on("passwordRequest", () => log2("la penna chiede la password (questa prova non la gestisce)"));
-  var SVC = ["000019f1-0000-1000-8000-00805f9b34fb", "4f99f138-9d53-5bfa-9e50-b147491afe68"];
-  var _a3;
-  var counts = JSON.parse((_a3 = store.get(COUNT_KEY)) != null ? _a3 : "{}");
+  pen.on("passwordRequest", () => show("warn", "La penna chiede la password", "Toglila da Neo Studio e riprova."));
+  var SENT_KEY = "neopen-sync-inviati";
+  var _a4;
+  var sent = JSON.parse((_a4 = store.get(SENT_KEY)) != null ? _a4 : "{}");
   var device = null;
   var busy = false;
-  var timer = null;
-  var lastBeat = Date.now();
-  var everyMs = 6e4;
-  function setBusy(b) {
-    busy = b;
-    for (const id of ["connect", "diag"]) $(id).disabled = b;
-  }
+  var lastRun = 0;
+  var round = (n) => Math.round(n * 100) / 100;
   function limit(p, ms, what) {
     return new Promise((res, rej) => {
       const t = window.setTimeout(() => rej(new Error(`${what}: nessuna risposta in ${ms / 1e3} s`)), ms);
@@ -4782,126 +4813,113 @@
       );
     });
   }
-  async function readMemory() {
-    const pages = await pen.listMemory();
-    let changed = 0;
-    for (const key of pages) {
-      const id = pageId(key);
-      const got = await pen.downloadPage(key, (count) => counts[id] !== count);
-      if (got) {
-        counts[id] = got.count;
-        changed++;
-        log2(`pagina ${key.note}/${key.page}: ${got.strokes.length} tratti letti`);
-      }
+  async function knownPen() {
+    var _a5, _b2, _c, _d;
+    if (device) return device;
+    try {
+      const list = (_c = await ((_b2 = (_a5 = navigator.bluetooth) == null ? void 0 : _a5.getDevices) == null ? void 0 : _b2.call(_a5))) != null ? _c : [];
+      device = (_d = list.find((d) => {
+        var _a6;
+        return /neo|smartpen|m1/i.test((_a6 = d.name) != null ? _a6 : "");
+      })) != null ? _d : null;
+      if (device) log2(`penna ricordata da Bluefy: \xAB${device.name}\xBB`);
+    } catch {
     }
-    store.set(COUNT_KEY, JSON.stringify(counts));
-    log2(`memoria letta: ${pages.length} pagine, ${changed} cambiate`);
-  }
-  async function readPen(quiet) {
-    if (!device) throw new Error("nessuna penna memorizzata");
-    await limit(pen.connect({ device, quiet }), 45e3, "collegamento");
-    log2(`collegata (${where()})`);
-    await limit(readMemory(), 12e4, "lettura memoria");
+    return device;
   }
   async function choosePen() {
-    var _a4;
-    const bt = navigator.bluetooth;
-    if (!bt) {
-      log2("Web Bluetooth assente: apri questa pagina in Bluefy");
-      return null;
-    }
+    var _a5;
     try {
-      const d = await bt.requestDevice({ filters: SVC.map((s) => ({ services: [s] })), optionalServices: SVC });
-      log2(`penna scelta: \xAB${(_a4 = d.name) != null ? _a4 : "senza nome"}\xBB`);
-      return d;
+      device = await navigator.bluetooth.requestDevice({ filters: SVC.map((s) => ({ services: [s] })), optionalServices: SVC });
+      log2(`penna scelta: \xAB${(_a5 = device.name) != null ? _a5 : "senza nome"}\xBB`);
+      return true;
     } catch (e) {
-      log2(`selettore chiuso senza scegliere (${describeError(e)}). Se la penna non compariva: accendila, scrivi due righe e riprova`);
-      return null;
+      log2(`selettore chiuso senza scegliere (${describeError(e)})`);
+      return false;
     }
   }
-  $("connect").addEventListener("click", async () => {
+  async function readAndSend() {
+    await limit(pen.connect({ device, quiet: true }), 45e3, "collegamento");
+    log2(`collegata (${where()})`);
+    const keys = await limit(pen.listMemory(), 3e4, "elenco pagine");
+    let pages = 0;
+    let strokes = 0;
+    for (const key of keys) {
+      const id = pageId(key);
+      const got = await limit(pen.downloadPage(key, (count) => sent[id] !== count), 9e4, `pagina ${key.note}/${key.page}`);
+      if (!got) continue;
+      show("work", "Invio le pagine al PC\u2026", `pagina ${key.note}/${key.page}`);
+      const clean = got.strokes.map((s) => ({ t: s.t, tip: s.tip, color: s.color, pts: s.pts.map(round) }));
+      await relay({ action: "put", pages: [{ id, count: got.count, strokes: clean }] });
+      sent[id] = got.count;
+      store.set(SENT_KEY, JSON.stringify(sent));
+      pages++;
+      strokes += clean.length;
+      log2(`pagina ${key.note}/${key.page}: ${clean.length} tratti inviati`);
+    }
+    return { pages, strokes };
+  }
+  async function run(trigger) {
     if (busy) return;
-    setBusy(true);
+    if (!navigator.bluetooth) return show("warn", "Apri questa pagina in Bluefy", "Safari non pu\xF2 parlare con la penna.");
+    if (!hasCfg()) return show("warn", "Mancano indirizzo e chiave", "Compila i campi qui sotto (li trovi nella nota \xABCollegamento iPhone\xBB in Obsidian).");
+    busy = true;
+    lastRun = Date.now();
+    $("go").setAttribute("disabled", "");
+    $("choose").classList.add("hide");
+    log2(`avvio (${trigger}, ${where()})`);
     try {
-      const d = await choosePen();
-      if (!d) return;
-      device = d;
-      await readPen(false);
+      if (!await knownPen()) {
+        show("warn", "Scegli la penna", "Accendila, poi tocca il pulsante: serve solo la prima volta.");
+        $("choose").classList.remove("hide");
+        return;
+      }
+      show("work", "Mi collego alla penna\u2026", "Tienila accesa e vicina.");
+      const r = await readAndSend();
+      const t = (/* @__PURE__ */ new Date()).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+      show("ok", r.pages ? `Fatto \xB7 ${r.pages} pagine inviate` : "Fatto \xB7 niente di nuovo", `${t} \xB7 puoi tornare alla Home`);
+      log2(r.pages ? `fine: ${r.pages} pagine, ${r.strokes} tratti` : "fine: niente di nuovo");
     } catch (e) {
-      log2(`collegamento non riuscito: ${describeError(e)}`);
+      const msg = describeError(e);
+      log2(`non riuscito (${where()}): ${msg}`);
+      if (/non risponde|nessuna risposta|disconnected|NetworkError|GATT/i.test(msg)) show("warn", "Penna spenta o lontana", "Togli il tappo, poi riprova.");
+      else show("warn", "Non riuscito", msg);
     } finally {
       try {
         pen.disconnect();
       } catch {
       }
-      setBusy(false);
-    }
-  });
-  async function autoAttempt() {
-    var _a4, _b2, _c, _d;
-    if (busy) return log2("tentativo saltato: il precedente \xE8 ancora in corso");
-    if (!device) {
-      try {
-        const known = (_c = await ((_b2 = (_a4 = navigator.bluetooth) == null ? void 0 : _a4.getDevices) == null ? void 0 : _b2.call(_a4))) != null ? _c : [];
-        device = (_d = known.find((d) => {
-          var _a5;
-          return /neo|smartpen|m1/i.test((_a5 = d.name) != null ? _a5 : "");
-        })) != null ? _d : null;
-        if (device) log2(`penna ripresa da Bluefy dopo il ricaricamento: \xAB${device.name}\xBB`);
-      } catch {
-      }
-    }
-    if (!device) return log2("tentativo saltato: prima tocca \xABCollega la penna\xBB e scegli la penna");
-    setBusy(true);
-    try {
-      await readPen(true);
-    } catch (e) {
-      log2(`tentativo non riuscito (${where()}): ${describeError(e)}`);
-    } finally {
-      try {
-        pen.disconnect();
-      } catch {
-      }
-      setBusy(false);
+      busy = false;
+      $("go").removeAttribute("disabled");
     }
   }
-  function beat() {
-    const now = Date.now();
-    const late = now - lastBeat - everyMs;
-    lastBeat = now;
-    log2(`battito \xB7 ${document.visibilityState === "visible" ? "davanti" : "BACKGROUND"}${late > 15e3 ? ` \xB7 in ritardo di ${Math.round(late / 1e3)} s (iOS ha messo in pausa la pagina)` : ""}`);
-    void autoAttempt();
-  }
-  $("diag").addEventListener("click", async () => {
-    var _a4, _b2, _c, _d;
-    const bt = navigator.bluetooth;
-    if (!bt) return log2("diagnostica: Web Bluetooth assente");
-    try {
-      log2(`diagnostica: adattatore disponibile = ${await ((_a4 = bt.getAvailability) == null ? void 0 : _a4.call(bt))}`);
-    } catch (e) {
-      log2(`diagnostica: getAvailability \u2192 ${describeError(e)}`);
-    }
-    try {
-      const known = (_c = await ((_b2 = bt.getDevices) == null ? void 0 : _b2.call(bt))) != null ? _c : null;
-      log2(`diagnostica: penne ricordate da Bluefy = ${known ? known.map((d) => d.name).join(", ") || "nessuna" : "funzione non disponibile"}`);
-    } catch (e) {
-      log2(`diagnostica: getDevices \u2192 ${describeError(e)}`);
-    }
-    log2(`diagnostica: penna memorizzata in questa pagina = ${(_d = device == null ? void 0 : device.name) != null ? _d : "nessuna"}`);
+  $("go").addEventListener("click", () => void run("tocco"));
+  $("choose").addEventListener("click", async () => {
+    if (await choosePen()) void run("scelta penna");
   });
-  $("start").addEventListener("click", () => {
-    everyMs = Number($("every").value) * 1e3;
-    if (timer) window.clearInterval(timer);
-    lastBeat = Date.now();
-    timer = window.setInterval(beat, everyMs);
-    log2(`prova automatica avviata: un tentativo ogni ${everyMs / 1e3} s${device ? "" : " (ATTENZIONE: nessuna penna scelta, tocca prima \xABCollega la penna\xBB)"}`);
-    $("start").textContent = "Prova automatica attiva \u2713";
+  $("save").addEventListener("click", () => {
+    cfg = { url: $("url").value.trim(), secret: $("secret").value.trim() };
+    store.set(CFG_KEY, JSON.stringify(cfg));
+    log2("configurazione salvata");
+    if (hasCfg()) void run("configurazione");
+    else show("warn", "Indirizzo o chiave non validi", "L'indirizzo inizia con https://script.google.com e finisce con /exec.");
+  });
+  $("test").addEventListener("click", async () => {
+    cfg = { url: $("url").value.trim(), secret: $("secret").value.trim() };
+    store.set(CFG_KEY, JSON.stringify(cfg));
+    try {
+      await relay({ action: "ping" });
+      show("ok", "Script raggiunto", "Indirizzo e chiave sono giusti.");
+      log2("prova script: ok");
+    } catch (e) {
+      show("warn", "Script non raggiungibile", describeError(e));
+      log2(`prova script: ${describeError(e)}`);
+    }
   });
   $("copy").addEventListener("click", async () => {
     const text = lines.join("\n");
     try {
       await navigator.clipboard.writeText(text);
-      log2("registro copiato");
     } catch {
       const ta = document.createElement("textarea");
       ta.value = text;
@@ -4909,19 +4927,28 @@
       ta.select();
       document.execCommand("copy");
       ta.remove();
-      log2("registro copiato");
     }
+    log2("registro copiato");
   });
   $("clear").addEventListener("click", () => {
     lines = [];
     store.set(LOG_KEY, "[]");
-    show();
+    $("log").textContent = "";
   });
-  document.addEventListener("visibilitychange", () => log2(`la pagina \xE8 ora ${document.visibilityState === "visible" ? "davanti" : "in background"}`));
-  window.addEventListener("pagehide", () => log2("pagina nascosta (pagehide)"));
-  window.addEventListener("pageshow", () => log2("pagina mostrata (pageshow)"));
-  log2(`pagina aperta (versione 3) \xB7 Web Bluetooth ${navigator.bluetooth ? "disponibile" : "NON disponibile (aprila in Bluefy)"}`);
-  show();
+  $("forget").addEventListener("click", () => {
+    for (const k of Object.keys(sent)) delete sent[k];
+    store.set(SENT_KEY, "{}");
+    log2("elenco delle pagine inviate azzerato: al prossimo giro le rimando tutte");
+  });
+  document.addEventListener("visibilitychange", () => {
+    log2(`la pagina \xE8 ora ${document.visibilityState === "visible" ? "davanti" : "in background"}`);
+    if (document.visibilityState === "visible" && Date.now() - lastRun > 2e4) void run("pagina davanti");
+  });
+  window.addEventListener("pageshow", () => log2("pagina mostrata"));
+  log2(`pagina aperta (versione ${VERSION})`);
+  $("log").textContent = lines.slice().reverse().join("\n");
+  if (hasCfg()) void run("apertura");
+  else show("idle", "Prima configurazione", "Compila indirizzo e chiave qui sotto.");
 })();
 </script>
 </body>
