@@ -12,6 +12,7 @@
   h1 { font-size:22px; margin:0 0 4px; }
   p { color:var(--muted); margin:0 0 16px; font-size:14px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  button:disabled { opacity:.5; }
   button, select { font:inherit; border-radius:10px; border:1px solid var(--line); padding:12px 14px; width:100%; margin-top:8px; background:var(--card); color:var(--fg); }
   button.main { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
   #status { font-weight:600; }
@@ -27,8 +28,8 @@
     <div>Stato: <span id="status">disconnesso</span></div>
     <ol>
       <li>Accendi la penna (chiudi Neo Studio sul telefono).</li>
-      <li>Tocca «Collega la penna» e scegli la penna.</li>
-      <li>Scegli ogni quanto riprovare e tocca «Avvia prova automatica».</li>
+      <li>Tocca «Collega la penna» e, nell'elenco di Bluefy, scegli la penna. Aspetta «memoria letta».</li>
+      <li>Senza ricaricare la pagina, scegli ogni quanto riprovare e tocca «Avvia prova automatica».</li>
       <li>Blocca il telefono e mettilo in tasca per 20–30 minuti, scrivendo ogni tanto sul quaderno.</li>
       <li>Riapri, tocca «Copia registro» e incollamelo in chat.</li>
     </ol>
@@ -4266,44 +4267,46 @@
       const bt = navigator.bluetooth;
       if (!bt) throw new Error("Web Bluetooth non disponibile in questa versione di Obsidian.");
       this.live = !!opts.live;
-      let device;
-      if (opts.reuse && this.lastDevice) {
-        device = this.lastDevice;
+      let device2;
+      if (opts.device) {
+        device2 = opts.device;
+      } else if (opts.reuse && this.lastDevice) {
+        device2 = this.lastDevice;
       } else {
         this.setStatus({ state: "ricerca" });
         if (!opts.quiet) this.log("Cerco la penna\u2026 (accendila e tienila vicina; chiudi Neo Studio sul telefono)");
         try {
-          device = await this.requestPen((_a4 = opts.scanMs) != null ? _a4 : 3e4, !!opts.quiet);
+          device2 = await this.requestPen((_a4 = opts.scanMs) != null ? _a4 : 3e4, !!opts.quiet);
         } catch (e) {
           this.setStatus({ state: "disconnesso" });
           throw e;
         }
       }
-      this.device = device;
-      this.lastDevice = device;
-      this.setStatus({ state: "connessione", name: (_b2 = device.name) != null ? _b2 : "Neo Smartpen" });
-      if (!opts.quiet) this.log(`Trovata: ${(_c = device.name) != null ? _c : device.id}. Mi collego\u2026`);
-      device.addEventListener("gattserverdisconnected", this.onGattDisconnected);
+      this.device = device2;
+      this.lastDevice = device2;
+      this.setStatus({ state: "connessione", name: (_b2 = device2.name) != null ? _b2 : "Neo Smartpen" });
+      if (!opts.quiet) this.log(`Trovata: ${(_c = device2.name) != null ? _c : device2.id}. Mi collego\u2026`);
+      device2.addEventListener("gattserverdisconnected", this.onGattDisconnected);
       const authorized = new Promise((resolve, reject) => this.authWait = { resolve, reject });
       authorized.catch(() => void 0);
       try {
         this.connecting = true;
         const attempts = opts.quiet ? 1 : 3;
         let chars = null;
-        for (let attempt2 = 1; !chars; attempt2++) {
+        for (let attempt = 1; !chars; attempt++) {
           try {
-            const server = await withTimeout(device.gatt.connect(), 12e3, "la penna non risponde");
+            const server = await withTimeout(device2.gatt.connect(), 12e3, "la penna non risponde");
             chars = await this.bindCharacteristics(server, !!opts.quiet);
           } catch (e) {
-            if (attempt2 >= attempts) throw e;
-            if (!opts.quiet) this.log(`La penna ha chiuso la connessione, riprovo (${attempt2 + 1}/${attempts})\u2026`);
+            if (attempt >= attempts) throw e;
+            if (!opts.quiet) this.log(`La penna ha chiuso la connessione, riprovo (${attempt + 1}/${attempts})\u2026`);
             await sleep(1200);
           }
         }
         this.connecting = false;
         this.notifyChar = chars.notify;
         this.writeChar = chars.write;
-        this.setupController(device);
+        this.setupController(device2);
         await this.notifyChar.startNotifications();
         this.notifyChar.addEventListener("characteristicvaluechanged", this.onNotify);
         this.controller.OnConnected();
@@ -4314,7 +4317,7 @@
         this.authWait = null;
         if (!opts.quiet) this.log(`Connessione fallita: ${(_d = e == null ? void 0 : e.message) != null ? _d : e}`);
         try {
-          (_e = device.gatt) == null ? void 0 : _e.disconnect();
+          (_e = device2.gatt) == null ? void 0 : _e.disconnect();
         } catch {
         }
         this.cleanup();
@@ -4378,9 +4381,9 @@
         return { notify, write };
       }
     }
-    setupController(device) {
+    setupController(device2) {
       const c = new PenController();
-      c.device = device;
+      c.device = device2;
       c.addWrite((data) => this.enqueueWrite(data));
       c.addCallback(
         (_ctrl, dot) => this.onDot(dot),
@@ -4749,6 +4752,7 @@
     show();
   };
   var status = (m) => $("status").textContent = m;
+  var where = () => document.visibilityState === "visible" ? "app davanti" : "app in BACKGROUND";
   var chooser = { available: true, cancel() {
   }, setQuiet() {
   }, dispose() {
@@ -4757,12 +4761,27 @@
   pen.on("log", (m) => log2(`penna: ${m}`));
   pen.on("status", (s) => status(`${s.state}${s.name ? " \xB7 " + s.name : ""}`));
   pen.on("passwordRequest", () => log2("la penna chiede la password (questa prova non la gestisce)"));
+  var SVC = ["000019f1-0000-1000-8000-00805f9b34fb", "4f99f138-9d53-5bfa-9e50-b147491afe68"];
   var _a3;
   var counts = JSON.parse((_a3 = store.get(COUNT_KEY)) != null ? _a3 : "{}");
+  var device = null;
   var busy = false;
   var timer = null;
   var lastBeat = Date.now();
   var everyMs = 6e4;
+  function setBusy(b) {
+    busy = b;
+    for (const id of ["connect", "diag"]) $(id).disabled = b;
+  }
+  function limit(p, ms, what) {
+    return new Promise((res, rej) => {
+      const t = window.setTimeout(() => rej(new Error(`${what}: nessuna risposta in ${ms / 1e3} s`)), ms);
+      p.then(
+        (v) => (window.clearTimeout(t), res(v)),
+        (e) => (window.clearTimeout(t), rej(e))
+      );
+    });
+  }
   async function readMemory() {
     const pages = await pen.listMemory();
     let changed = 0;
@@ -4778,22 +4797,72 @@
     store.set(COUNT_KEY, JSON.stringify(counts));
     log2(`memoria letta: ${pages.length} pagine, ${changed} cambiate`);
   }
-  async function attempt(firstTime) {
+  async function readPen(quiet) {
+    if (!device) throw new Error("nessuna penna memorizzata");
+    await limit(pen.connect({ device, quiet }), 45e3, "collegamento");
+    log2(`collegata (${where()})`);
+    await limit(readMemory(), 12e4, "lettura memoria");
+  }
+  async function choosePen() {
     var _a4;
-    if (busy) return;
-    busy = true;
+    const bt = navigator.bluetooth;
+    if (!bt) {
+      log2("Web Bluetooth assente: apri questa pagina in Bluefy");
+      return null;
+    }
     try {
-      if (!pen.isConnected) await pen.connect(firstTime ? { scanMs: 3e4 } : { reuse: pen.hasKnownDevice, quiet: true, scanMs: 15e3 });
-      log2(`collegata (${document.visibilityState === "visible" ? "app davanti" : "app in BACKGROUND"})`);
-      await readMemory();
+      const d = await bt.requestDevice({ filters: SVC.map((s) => ({ services: [s] })), optionalServices: SVC });
+      log2(`penna scelta: \xAB${(_a4 = d.name) != null ? _a4 : "senza nome"}\xBB`);
+      return d;
     } catch (e) {
-      log2(`tentativo non riuscito (${document.visibilityState}): ${(_a4 = e == null ? void 0 : e.message) != null ? _a4 : e}`);
+      log2(`selettore chiuso senza scegliere (${describeError(e)}). Se la penna non compariva: accendila, scrivi due righe e riprova`);
+      return null;
+    }
+  }
+  $("connect").addEventListener("click", async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const d = await choosePen();
+      if (!d) return;
+      device = d;
+      await readPen(false);
+    } catch (e) {
+      log2(`collegamento non riuscito: ${describeError(e)}`);
     } finally {
       try {
         pen.disconnect();
       } catch {
       }
-      busy = false;
+      setBusy(false);
+    }
+  });
+  async function autoAttempt() {
+    var _a4, _b2, _c, _d;
+    if (busy) return log2("tentativo saltato: il precedente \xE8 ancora in corso");
+    if (!device) {
+      try {
+        const known = (_c = await ((_b2 = (_a4 = navigator.bluetooth) == null ? void 0 : _a4.getDevices) == null ? void 0 : _b2.call(_a4))) != null ? _c : [];
+        device = (_d = known.find((d) => {
+          var _a5;
+          return /neo|smartpen|m1/i.test((_a5 = d.name) != null ? _a5 : "");
+        })) != null ? _d : null;
+        if (device) log2(`penna ripresa da Bluefy dopo il ricaricamento: \xAB${device.name}\xBB`);
+      } catch {
+      }
+    }
+    if (!device) return log2("tentativo saltato: prima tocca \xABCollega la penna\xBB e scegli la penna");
+    setBusy(true);
+    try {
+      await readPen(true);
+    } catch (e) {
+      log2(`tentativo non riuscito (${where()}): ${describeError(e)}`);
+    } finally {
+      try {
+        pen.disconnect();
+      } catch {
+      }
+      setBusy(false);
     }
   }
   function beat() {
@@ -4801,10 +4870,10 @@
     const late = now - lastBeat - everyMs;
     lastBeat = now;
     log2(`battito \xB7 ${document.visibilityState === "visible" ? "davanti" : "BACKGROUND"}${late > 15e3 ? ` \xB7 in ritardo di ${Math.round(late / 1e3)} s (iOS ha messo in pausa la pagina)` : ""}`);
-    void attempt(false);
+    void autoAttempt();
   }
-  async function diagnose() {
-    var _a4, _b2;
+  $("diag").addEventListener("click", async () => {
+    var _a4, _b2, _c, _d;
     const bt = navigator.bluetooth;
     if (!bt) return log2("diagnostica: Web Bluetooth assente");
     try {
@@ -4812,30 +4881,20 @@
     } catch (e) {
       log2(`diagnostica: getAvailability \u2192 ${describeError(e)}`);
     }
-    const svc = ["000019f1-0000-1000-8000-00805f9b34fb", "4f99f138-9d53-5bfa-9e50-b147491afe68"];
-    const tries = [
-      ["servizio", { filters: svc.map((s) => ({ services: [s] })), optionalServices: svc }],
-      ["nome", { filters: ["Neo", "NWP", "Smartpen", "LAMY"].map((namePrefix) => ({ namePrefix })), optionalServices: svc }],
-      ["tutti", { acceptAllDevices: true, optionalServices: svc }]
-    ];
-    for (const [label, opts] of tries) {
-      try {
-        const d = await bt.requestDevice(opts);
-        log2(`diagnostica ${label}: trovata \xAB${(_b2 = d.name) != null ? _b2 : "senza nome"}\xBB`);
-        return;
-      } catch (e) {
-        log2(`diagnostica ${label}: ${describeError(e)}`);
-      }
+    try {
+      const known = (_c = await ((_b2 = bt.getDevices) == null ? void 0 : _b2.call(bt))) != null ? _c : null;
+      log2(`diagnostica: penne ricordate da Bluefy = ${known ? known.map((d) => d.name).join(", ") || "nessuna" : "funzione non disponibile"}`);
+    } catch (e) {
+      log2(`diagnostica: getDevices \u2192 ${describeError(e)}`);
     }
-  }
-  $("diag").addEventListener("click", () => void diagnose());
-  $("connect").addEventListener("click", () => void attempt(true));
+    log2(`diagnostica: penna memorizzata in questa pagina = ${(_d = device == null ? void 0 : device.name) != null ? _d : "nessuna"}`);
+  });
   $("start").addEventListener("click", () => {
     everyMs = Number($("every").value) * 1e3;
     if (timer) window.clearInterval(timer);
     lastBeat = Date.now();
     timer = window.setInterval(beat, everyMs);
-    log2(`prova automatica avviata: un tentativo ogni ${everyMs / 1e3} s`);
+    log2(`prova automatica avviata: un tentativo ogni ${everyMs / 1e3} s${device ? "" : " (ATTENZIONE: nessuna penna scelta, tocca prima \xABCollega la penna\xBB)"}`);
     $("start").textContent = "Prova automatica attiva \u2713";
   });
   $("copy").addEventListener("click", async () => {
@@ -4861,7 +4920,7 @@
   document.addEventListener("visibilitychange", () => log2(`la pagina \xE8 ora ${document.visibilityState === "visible" ? "davanti" : "in background"}`));
   window.addEventListener("pagehide", () => log2("pagina nascosta (pagehide)"));
   window.addEventListener("pageshow", () => log2("pagina mostrata (pageshow)"));
-  log2(`pagina aperta \xB7 Web Bluetooth ${navigator.bluetooth ? "disponibile" : "NON disponibile (aprila in Bluefy)"}`);
+  log2(`pagina aperta (versione 3) \xB7 Web Bluetooth ${navigator.bluetooth ? "disponibile" : "NON disponibile (aprila in Bluefy)"}`);
   show();
 })();
 </script>
