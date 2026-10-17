@@ -33,6 +33,7 @@
       <li>Riapri, tocca «Copia registro» e incollamelo in chat.</li>
     </ol>
     <button id="connect" class="main">Collega la penna</button>
+    <button id="diag">Diagnostica Bluetooth</button>
     <select id="every">
       <option value="60">Riprova ogni minuto</option>
       <option value="120" selected>Riprova ogni 2 minuti</option>
@@ -42,10 +43,9 @@
     <div class="row"><button id="copy">Copia registro</button><button id="clear">Cancella registro</button></div>
   </div>
   <div class="card"><pre id="log"></pre></div>
-  <script>
-"use strict";
+  <script>"use strict";
 (() => {
-  // ../vendor/web_pen_sdk/Util/Converter.ts
+  // vendor/web_pen_sdk/Util/Converter.ts
   function toUTF8Array(str) {
     var utf8 = [];
     for (var i2 = 0; i2 < str.length; i2++) {
@@ -109,7 +109,7 @@
     return Uint8Array.from(byteArray);
   }
 
-  // ../vendor/web_pen_sdk/PenCotroller/Const.ts
+  // vendor/web_pen_sdk/PenCotroller/Const.ts
   var CONST = {
     /**패킷의 시작 값 */
     PK_STX: 192,
@@ -127,7 +127,7 @@
   };
   var Const_default = CONST;
 
-  // ../vendor/web_pen_sdk/Util/ByteUtil.ts
+  // vendor/web_pen_sdk/Util/ByteUtil.ts
   var ByteUtil = class {
     constructor() {
       this.mBuffer = [];
@@ -363,7 +363,7 @@
     return [section, owner];
   }
 
-  // ../vendor/web_pen_sdk/Util/NLog.ts
+  // vendor/web_pen_sdk/Util/NLog.ts
   var debug = true;
   function log(...arg) {
     if (debug) console.log(...arg);
@@ -372,7 +372,7 @@
     debug = bool;
   }
 
-  // ../vendor/web_pen_sdk/PenCotroller/Packet.ts
+  // vendor/web_pen_sdk/PenCotroller/Packet.ts
   var Packet = class {
     constructor() {
       this.Cmd = 0;
@@ -487,7 +487,7 @@
     }
   };
 
-  // ../vendor/web_pen_sdk/API/PageInfo.ts
+  // vendor/web_pen_sdk/API/PageInfo.ts
   var PageInfo = class {
     constructor(s, o, b, p) {
       this.section = s;
@@ -497,7 +497,7 @@
     }
   };
 
-  // ../vendor/web_pen_sdk/API/Dot.ts
+  // vendor/web_pen_sdk/API/Dot.ts
   var DotTypes = Object.freeze({
     PEN_DOWN: 0,
     PEN_MOVE: 1,
@@ -618,7 +618,7 @@
   };
   var Dot_default = Dot;
 
-  // ../vendor/web_pen_sdk/PenCotroller/CMD.ts
+  // vendor/web_pen_sdk/PenCotroller/CMD.ts
   var CMD = {
     /**디바이스에 대한 버전(정보)을 요청하는 커맨드, 펜과 연결시 최우선 수행*/
     VERSION_REQUEST: 1,
@@ -709,7 +709,7 @@
   };
   var CMD_default = CMD;
 
-  // ../vendor/web_pen_sdk/API/PenMessageType.ts
+  // vendor/web_pen_sdk/API/PenMessageType.ts
   var PenMessageType = {
     /**
      Pens when the pen authorized, the events that occur
@@ -911,7 +911,7 @@
     STATUS_ERROR: 3
   };
 
-  // ../vendor/web_pen_sdk/Model/Response.ts
+  // vendor/web_pen_sdk/Model/Response.ts
   function VersionInfo(packet) {
     const DeviceName = packet.GetString(16);
     const FirmwareVersion = packet.GetString(16);
@@ -1094,7 +1094,7 @@
     return result;
   };
 
-  // ../node_modules/fflate/esm/browser.js
+  // node_modules/fflate/esm/browser.js
   var u8 = Uint8Array;
   var u16 = Uint16Array;
   var i32 = Int32Array;
@@ -1852,7 +1852,7 @@
   } catch (e) {
   }
 
-  // ../src/shims/zlib.ts
+  // src/shims/zlib.ts
   function unzip(input, cb) {
     try {
       cb(null, decompressSync(input));
@@ -1871,7 +1871,7 @@
   }
   var zlib_default = { unzip, deflate };
 
-  // ../vendor/web_pen_sdk/Util/DotFilter.ts
+  // vendor/web_pen_sdk/Util/DotFilter.ts
   var MAX_NOTE_ID = 16384;
   var MAX_PAGE_ID = 262143;
   var MAX_X = 15070;
@@ -2059,7 +2059,7 @@
     }
   };
 
-  // ../vendor/web_pen_sdk/API/PUIStub.ts
+  // vendor/web_pen_sdk/API/PUIStub.ts
   function isPUI(_pageInfo) {
     return false;
   }
@@ -2075,7 +2075,7 @@
     }
   };
 
-  // ../vendor/web_pen_sdk/PenCotroller/PenClientParserV2.ts
+  // vendor/web_pen_sdk/PenCotroller/PenClientParserV2.ts
   var PenClientParserV2 = class {
     constructor(penController) {
       /**
@@ -3053,7 +3053,7 @@
     }
   };
 
-  // ../vendor/web_pen_sdk/Model/SDKError.ts
+  // vendor/web_pen_sdk/Model/SDKError.ts
   var SDKError = class {
     constructor(msg) {
       this.message = msg;
@@ -3064,7 +3064,7 @@
     }
   };
 
-  // ../vendor/web_pen_sdk/PenCotroller/PenRequestV2.ts
+  // vendor/web_pen_sdk/PenCotroller/PenRequestV2.ts
   var PenRequestV2 = class {
     constructor(penController) {
       /**
@@ -3711,7 +3711,7 @@
     }
   };
 
-  // ../vendor/web_pen_sdk/PenCotroller/PenController.ts
+  // vendor/web_pen_sdk/PenCotroller/PenController.ts
   var PenController = class {
     constructor() {
       /**
@@ -4113,7 +4113,7 @@
     }
   };
 
-  // ../src/events.ts
+  // src/events.ts
   var Emitter = class {
     constructor() {
       this.listeners = {};
@@ -4141,7 +4141,7 @@
     }
   };
 
-  // ../src/types.ts
+  // src/types.ts
   function pageId(k) {
     return `${k.section}_${k.owner}_${k.note}_${k.page}`;
   }
@@ -4160,13 +4160,25 @@
     return out;
   }
 
-  // ../src/pen/PenConnection.ts
-  var SERVICE_16 = 6641;
-  var NOTIFY_16 = 11169;
-  var WRITE_16 = 11168;
+  // src/pen/PenConnection.ts
+  var SERVICE_16 = "000019f1-0000-1000-8000-00805f9b34fb";
+  var NOTIFY_16 = "00002ba1-0000-1000-8000-00805f9b34fb";
+  var WRITE_16 = "00002ba0-0000-1000-8000-00805f9b34fb";
   var SERVICE_128 = "4f99f138-9d53-5bfa-9e50-b147491afe68";
   var NOTIFY_128 = "64cd86b1-2256-5aeb-9f04-2caf6c60ae57";
   var WRITE_128 = "8bc8cc7d-88ca-56b0-af9a-9bf514d0d61a";
+  function describeError(e) {
+    if (e == null) return "errore sconosciuto";
+    if (typeof e !== "object") return String(e);
+    const x2 = e;
+    const parts = [x2.name, x2.message, x2.code != null ? `codice ${x2.code}` : ""].filter(Boolean);
+    if (parts.length) return parts.join(" \xB7 ");
+    try {
+      return JSON.stringify(e);
+    } catch {
+      return String(e);
+    }
+  }
   var DOT_DOWN = 0;
   var DOT_MOVE = 1;
   var DOT_UP = 2;
@@ -4216,7 +4228,7 @@
         this.finishCurrentStroke();
         try {
           (_a4 = this.controller) == null ? void 0 : _a4.OnDisconnected();
-        } catch (e) {
+        } catch {
         }
         this.cleanup();
       };
@@ -4303,7 +4315,7 @@
         if (!opts.quiet) this.log(`Connessione fallita: ${(_d = e == null ? void 0 : e.message) != null ? _d : e}`);
         try {
           (_e = device.gatt) == null ? void 0 : _e.disconnect();
-        } catch (e2) {
+        } catch {
         }
         this.cleanup();
         throw e;
@@ -4311,7 +4323,7 @@
     }
     /** Cerca la penna: prima tra quelle già permesse, poi con una ricerca Bluetooth. */
     async requestPen(scanMs, quiet) {
-      var _a4, _b2, _c;
+      var _a4, _b2;
       const bt = navigator.bluetooth;
       try {
         const known = (_b2 = await ((_a4 = bt.getDevices) == null ? void 0 : _a4.call(bt))) != null ? _b2 : [];
@@ -4320,21 +4332,32 @@
           return PEN_NAME.test((_a5 = x2.name) != null ? _a5 : "");
         });
         if (d) return d;
-      } catch (e) {
+      } catch {
       }
       this.chooser.setQuiet(quiet);
       const timeout = window.setTimeout(() => {
         if (!quiet) this.log(`Nessuna penna trovata entro ${Math.round(scanMs / 1e3)} secondi: annullo la ricerca.`);
         this.chooser.cancel();
       }, scanMs);
+      const optionalServices = [SERVICE_16, SERVICE_128];
+      const variants = [
+        { filters: [{ services: [SERVICE_16] }, { services: [SERVICE_128] }], optionalServices },
+        { filters: ["Neo", "NWP", "Smartpen", "LAMY"].map((namePrefix) => ({ namePrefix })), optionalServices }
+      ];
       try {
-        const run = () => bt.requestDevice({
-          filters: [{ services: [SERVICE_16] }, { services: [SERVICE_128] }],
-          optionalServices: [SERVICE_16, SERVICE_128]
-        });
-        return this.gesture ? await this.gesture(run) : await run();
+        let last = null;
+        for (const opts of variants) {
+          try {
+            const run = () => bt.requestDevice(opts);
+            return this.gesture ? await this.gesture(run) : await run();
+          } catch (e) {
+            last = e;
+            if (/cancel|NotFoundError|abort/i.test(`${e == null ? void 0 : e.name} ${e == null ? void 0 : e.message}`)) break;
+          }
+        }
+        throw last;
       } catch (e) {
-        throw new Error(`Ricerca fallita: ${(_c = e == null ? void 0 : e.message) != null ? _c : e}`);
+        throw new Error(`Ricerca fallita: ${describeError(e)}`);
       } finally {
         window.clearTimeout(timeout);
         this.chooser.setQuiet(false);
@@ -4347,7 +4370,7 @@
         const write = await s.getCharacteristic(WRITE_16);
         if (!quiet) this.log("Servizio penna (16 bit) trovato.");
         return { notify, write };
-      } catch (e) {
+      } catch {
         const s = await server.getPrimaryService(SERVICE_128);
         const notify = await s.getCharacteristic(NOTIFY_128);
         const write = await s.getCharacteristic(WRITE_128);
@@ -4375,7 +4398,7 @@
         await sleep(300);
         try {
           await char.writeValue(buf);
-        } catch (e2) {
+        } catch {
           this.log(`Scrittura verso la penna fallita: ${(_a4 = e == null ? void 0 : e.message) != null ? _a4 : e}`);
         }
       });
@@ -4694,7 +4717,7 @@
     });
   }
 
-  // test.ts
+  // mobile/test.ts
   var $ = (id) => document.getElementById(id);
   var LOG_KEY = "neopen-prova-registro";
   var COUNT_KEY = "neopen-prova-conteggi";
@@ -4702,14 +4725,14 @@
     get(k) {
       try {
         return localStorage.getItem(k);
-      } catch (e) {
+      } catch {
         return null;
       }
     },
     set(k, v) {
       try {
         localStorage.setItem(k, v);
-      } catch (e) {
+      } catch {
       }
     }
   };
@@ -4768,7 +4791,7 @@
     } finally {
       try {
         pen.disconnect();
-      } catch (e) {
+      } catch {
       }
       busy = false;
     }
@@ -4780,6 +4803,32 @@
     log2(`battito \xB7 ${document.visibilityState === "visible" ? "davanti" : "BACKGROUND"}${late > 15e3 ? ` \xB7 in ritardo di ${Math.round(late / 1e3)} s (iOS ha messo in pausa la pagina)` : ""}`);
     void attempt(false);
   }
+  async function diagnose() {
+    var _a4, _b2;
+    const bt = navigator.bluetooth;
+    if (!bt) return log2("diagnostica: Web Bluetooth assente");
+    try {
+      log2(`diagnostica: adattatore disponibile = ${await ((_a4 = bt.getAvailability) == null ? void 0 : _a4.call(bt))}`);
+    } catch (e) {
+      log2(`diagnostica: getAvailability \u2192 ${describeError(e)}`);
+    }
+    const svc = ["000019f1-0000-1000-8000-00805f9b34fb", "4f99f138-9d53-5bfa-9e50-b147491afe68"];
+    const tries = [
+      ["servizio", { filters: svc.map((s) => ({ services: [s] })), optionalServices: svc }],
+      ["nome", { filters: ["Neo", "NWP", "Smartpen", "LAMY"].map((namePrefix) => ({ namePrefix })), optionalServices: svc }],
+      ["tutti", { acceptAllDevices: true, optionalServices: svc }]
+    ];
+    for (const [label, opts] of tries) {
+      try {
+        const d = await bt.requestDevice(opts);
+        log2(`diagnostica ${label}: trovata \xAB${(_b2 = d.name) != null ? _b2 : "senza nome"}\xBB`);
+        return;
+      } catch (e) {
+        log2(`diagnostica ${label}: ${describeError(e)}`);
+      }
+    }
+  }
+  $("diag").addEventListener("click", () => void diagnose());
   $("connect").addEventListener("click", () => void attempt(true));
   $("start").addEventListener("click", () => {
     everyMs = Number($("every").value) * 1e3;
@@ -4794,7 +4843,7 @@
     try {
       await navigator.clipboard.writeText(text);
       log2("registro copiato");
-    } catch (e) {
+    } catch {
       const ta = document.createElement("textarea");
       ta.value = text;
       document.body.appendChild(ta);
@@ -4815,7 +4864,6 @@
   log2(`pagina aperta \xB7 Web Bluetooth ${navigator.bluetooth ? "disponibile" : "NON disponibile (aprila in Bluefy)"}`);
   show();
 })();
-
 </script>
 </body>
 </html>
