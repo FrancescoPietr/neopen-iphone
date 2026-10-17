@@ -1,0 +1,4821 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neo Pen – prova iPhone</title>
+<style>
+  :root { --bg:#f6f3ee; --fg:#1f1c19; --muted:#6b645c; --accent:#b4572e; --card:#fffdf9; --line:#e2dbd1; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1d1a17; --fg:#f2ede6; --muted:#a59d93; --accent:#e08a5f; --card:#272320; --line:#3a352f; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:20px 16px 40px; font:16px/1.45 -apple-system, system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  h1 { font-size:22px; margin:0 0 4px; }
+  p { color:var(--muted); margin:0 0 16px; font-size:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  button, select { font:inherit; border-radius:10px; border:1px solid var(--line); padding:12px 14px; width:100%; margin-top:8px; background:var(--card); color:var(--fg); }
+  button.main { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  #status { font-weight:600; }
+  ol { padding-left:20px; margin:6px 0 0; font-size:14px; color:var(--muted); }
+  pre { white-space:pre-wrap; font:12px/1.4 ui-monospace, Menlo, monospace; margin:0; max-height:55vh; overflow:auto; }
+  .row { display:flex; gap:8px; } .row button { margin-top:8px; }
+</style>
+</head>
+<body>
+  <h1>Neo Pen – prova iPhone</h1>
+  <p>Verifica se Bluefy riesce a leggere la penna da solo, anche con il telefono bloccato. Legge soltanto la memoria della penna: non cancella e non scrive niente.</p>
+  <div class="card">
+    <div>Stato: <span id="status">disconnesso</span></div>
+    <ol>
+      <li>Accendi la penna (chiudi Neo Studio sul telefono).</li>
+      <li>Tocca «Collega la penna» e scegli la penna.</li>
+      <li>Scegli ogni quanto riprovare e tocca «Avvia prova automatica».</li>
+      <li>Blocca il telefono e mettilo in tasca per 20–30 minuti, scrivendo ogni tanto sul quaderno.</li>
+      <li>Riapri, tocca «Copia registro» e incollamelo in chat.</li>
+    </ol>
+    <button id="connect" class="main">Collega la penna</button>
+    <select id="every">
+      <option value="60">Riprova ogni minuto</option>
+      <option value="120" selected>Riprova ogni 2 minuti</option>
+      <option value="300">Riprova ogni 5 minuti</option>
+    </select>
+    <button id="start">Avvia prova automatica</button>
+    <div class="row"><button id="copy">Copia registro</button><button id="clear">Cancella registro</button></div>
+  </div>
+  <div class="card"><pre id="log"></pre></div>
+  <script>
+"use strict";
+(() => {
+  // ../vendor/web_pen_sdk/Util/Converter.ts
+  function toUTF8Array(str) {
+    var utf8 = [];
+    for (var i2 = 0; i2 < str.length; i2++) {
+      var charcode = str.charCodeAt(i2);
+      if (charcode < 128) utf8.push(charcode);
+      else if (charcode < 2048) {
+        utf8.push(192 | charcode >> 6, 128 | charcode & 63);
+      } else if (charcode < 55296 || charcode >= 57344) {
+        utf8.push(224 | charcode >> 12, 128 | charcode >> 6 & 63, 128 | charcode & 63);
+      } else {
+        i2++;
+        charcode = 65536 + ((charcode & 1023) << 10 | str.charCodeAt(i2) & 1023);
+        utf8.push(
+          240 | charcode >> 18,
+          128 | charcode >> 12 & 63,
+          128 | charcode >> 6 & 63,
+          128 | charcode & 63
+        );
+      }
+    }
+    return new Uint8Array(utf8);
+  }
+  function byteArrayToInt(bytes) {
+    let arr = new Uint8Array(bytes);
+    let dv = new DataView(arr.buffer);
+    return dv.getUint32(0, true);
+  }
+  function intToByteArray(input) {
+    let arr = new Uint8Array(4);
+    let dv = new DataView(arr.buffer);
+    dv.setUint32(0, input, true);
+    return Uint8Array.from(arr);
+  }
+  function byteArrayToShort(bytes) {
+    let arr = new Uint8Array(bytes);
+    let dv = new DataView(arr.buffer);
+    return dv.getUint16(0, true);
+  }
+  function shortToByteArray(input) {
+    let arr = new Uint8Array(2);
+    let dv = new DataView(arr.buffer);
+    dv.setUint16(0, input, true);
+    return Uint8Array.from(arr);
+  }
+  function byteArrayToLong(bytes) {
+    var byte = new Uint8Array(bytes);
+    var view = new DataView(byte.buffer);
+    var hi = view.getUint32(0, true);
+    let low = view.getUint32(4, true);
+    var intValue = hi + low * 4294967296;
+    return intValue;
+  }
+  function longToByteArray(input) {
+    let long = input;
+    var byteArray = [0, 0, 0, 0, 0, 0, 0, 0];
+    for (var index = 0; index < byteArray.length; index++) {
+      var byte = long & 255;
+      byteArray[index] = byte;
+      long = (long - byte) / 256;
+    }
+    return Uint8Array.from(byteArray);
+  }
+
+  // ../vendor/web_pen_sdk/PenCotroller/Const.ts
+  var CONST = {
+    /**패킷의 시작 값 */
+    PK_STX: 192,
+    /**패킷의 종료 값 */
+    PK_ETX: 193,
+    /**패킷 내 실데이터 값으로 STX, ETX가 포함되어 있을 때 escape 처리를 위한 값 */
+    PK_DLE: 125,
+    PK_POS_CMD: 1,
+    PK_POS_RESULT: 2,
+    PK_POS_LENG1: 2,
+    PK_POS_LENG2: 3,
+    PK_HEADER_SIZE: 3,
+    DEF_LIMIT: 1e3,
+    DEF_GROWTH: 1e3
+  };
+  var Const_default = CONST;
+
+  // ../vendor/web_pen_sdk/Util/ByteUtil.ts
+  var ByteUtil = class {
+    constructor() {
+      this.mBuffer = [];
+      this.mPosRead = 0;
+    }
+    get Size() {
+      return this.mBuffer.length;
+    }
+    Clear() {
+      this.mPosRead = 0;
+      this.mBuffer = [];
+    }
+    /**
+     * 버퍼에 데이터를 추가하는 함수
+     * @param {number} input
+     */
+    PutByte(input) {
+      this.mBuffer.push(input);
+    }
+    /**
+     * 버퍼에 데이터를 추가하며 escape 여부를 확인하는 함수
+     * @param {number} input
+     * @param {boolean} escapeIfExist - false = 버퍼의 시작과 끝에 추가하여 escape처리를 안할 때
+     * @returns
+     */
+    Put(input, escapeIfExist = true) {
+      if (escapeIfExist) {
+        let escDatas = this.Escape(input);
+        let length = escDatas.length;
+        for (let i2 = 0; i2 < length; ++i2) {
+          this.PutByte(escDatas[i2]);
+        }
+      } else {
+        this.PutByte(input);
+      }
+      return this;
+    }
+    /**
+     * 버퍼에 특정 크기만큼의 배열을 추가하는 함수
+     * @param {array} inputs
+     * @param {number} length
+     * @returns
+     */
+    PutArray(inputs, length) {
+      let result = inputs.slice();
+      for (let i2 = 0; i2 < length; ++i2) {
+        this.Put(result[i2]);
+      }
+      return this;
+    }
+    /**
+     * 버퍼에 특정 크기만큼 빈 값을 추가하는 함수
+     * @param {number} length
+     * @returns
+     */
+    PutNull(length) {
+      for (let i2 = 0; i2 < length; ++i2) {
+        this.Put(0);
+      }
+      return this;
+    }
+    /**
+     * 버퍼에 4바이트 크기의 값을 추가하는 함수
+     * @param {number} input
+     * @returns
+     */
+    PutInt(input) {
+      let arr = intToByteArray(input);
+      return this.PutArray(arr, arr.length);
+    }
+    /**
+     * 버퍼에 8바이트 크기의 값을 추가하는 함수
+     * @param {number} input
+     * @returns
+     */
+    PutLong(input) {
+      let arr = longToByteArray(input);
+      return this.PutArray(arr, arr.length);
+    }
+    /**
+     * 버퍼에 2바이트 크기의 값을 추가하는 함수
+     * @param {number} input
+     * @returns
+     */
+    PutShort(input) {
+      let arr = shortToByteArray(input);
+      return this.PutArray(arr, arr.length);
+    }
+    //
+    // Get
+    //
+    /**
+     * 버퍼에서 원하는 바이트 크기만큼의 값을 반환하고, 바이트 위치값을 수정하는 함수
+     * @param {number} size
+     * @returns
+     */
+    GetBytes(size) {
+      let length = 0;
+      if (size) {
+        length = size;
+      } else {
+        length = this.mBuffer.length - this.mPosRead;
+      }
+      let result = this.mBuffer.slice(this.mPosRead, this.mPosRead + length);
+      this.mPosRead += length;
+      const u82 = new Uint8Array(result);
+      return u82;
+    }
+    /**
+     * 버퍼에서 1바이트 크기의 값을 반환받는 함수
+     * @returns
+     */
+    GetByte() {
+      return this.GetBytes(1)[0];
+    }
+    /**
+     * 버퍼에서 4바이트 크기의 값을 반환받는 함수
+     * @returns
+     */
+    GetInt() {
+      return byteArrayToInt(this.GetBytes(4));
+    }
+    /**
+     * 버퍼에서 2바이트 크기의 값을 반환받는 함수
+     * @returns
+     */
+    GetShort() {
+      return byteArrayToShort(this.GetBytes(2));
+    }
+    /**
+     * 버퍼에서 8바이트 크기의 값을 반환받는 함수
+     * @returns
+     */
+    GetLong() {
+      return byteArrayToLong(this.GetBytes(8));
+    }
+    /**
+     * 버퍼에서 원하는 바이트 크기만큼의 값을 반환받는 함수
+     * @param {number} length
+     * @returns
+     */
+    GetString(length) {
+      const arr = Array.from(this.GetBytes(length));
+      return String.fromCharCode(...arr).trim();
+    }
+    /**
+     * 버퍼에서 원하는 위치, 바이트 크기만큼의 값을 반환받는 함수
+     * @param {number} offset
+     * @param {number} size
+     * @returns
+     */
+    GetBytesWithOffset(offset, size) {
+      let packetSize = 0;
+      if (offset + size > this.mBuffer.length) {
+        packetSize = this.mBuffer.length - offset;
+      } else {
+        packetSize = size;
+      }
+      let result = this.mBuffer.slice(offset, offset + packetSize);
+      const u82 = new Uint8Array(result);
+      return u82;
+    }
+    /**
+     * 원하는 크기만큼의 버퍼의 검사합을 반환받는 함수
+     * @param {number} length
+     * @returns
+     */
+    GetCheckSum(length) {
+      let bytes = this.mBuffer.slice(this.mPosRead, this.mPosRead + length);
+      let CheckSum = 0;
+      let bufSize = bytes.length;
+      for (let i2 = 0; i2 < bufSize; ++i2) {
+        CheckSum += bytes[i2] & 255;
+      }
+      return CheckSum & 255;
+    }
+    /**
+     * 버퍼 전체의 검사합을 반환받는 함수
+     * @returns
+     */
+    GetCheckSumBF() {
+      let CheckSum = 0;
+      for (let i2 = 0; i2 < this.mBuffer.length; i2++) {
+        CheckSum += this.mBuffer[i2] & 255;
+      }
+      return CheckSum & 255;
+    }
+    /**
+     * 원하는 버퍼의 검사합을 반환받는 함수
+     * @param {Uint8Array} data
+     * @returns
+     */
+    GetCheckSumData(data) {
+      let CheckSum = 0;
+      for (let i2 = 0; i2 < data.length; i2++) {
+        CheckSum += data[i2] & 255;
+      }
+      return CheckSum & 255;
+    }
+    /**
+     * 현 버퍼를 Uint8Array 배열로 변환 후 반환하는 함수
+     * @returns {array}
+     */
+    ToU8Array() {
+      let u82 = new Uint8Array(this.mBuffer);
+      return u82;
+    }
+    /**
+     * 패킷 내 실데이터 값으로 패킷의 시작, 끝 값인 STX, ETX가 포함되어 있을 때 escape 처리를 위한 함수
+     * @param {number} input
+     * @returns {array}
+     */
+    Escape(input) {
+      if (input === Const_default.PK_STX || input === Const_default.PK_ETX || input === Const_default.PK_DLE) {
+        return [Const_default.PK_DLE, input ^ 32];
+      } else {
+        return [input];
+      }
+    }
+  };
+  function toHexString(bytes) {
+    const hex = Array.from(bytes).map((x2) => x2.toString(16).padStart(2, "0")).join("");
+    return hex;
+  }
+  function GetSectionOwnerByte(section, owner) {
+    let ownerByte = intToByteArray(owner);
+    ownerByte[3] = section & 255;
+    return ownerByte;
+  }
+  function GetSectionOwner(bytes) {
+    let section = bytes[3] & 255;
+    let owner = bytes[0] + bytes[1] * 256 + bytes[2] * 65536;
+    return [section, owner];
+  }
+
+  // ../vendor/web_pen_sdk/Util/NLog.ts
+  var debug = true;
+  function log(...arg) {
+    if (debug) console.log(...arg);
+  }
+  function setDebug(bool) {
+    debug = bool;
+  }
+
+  // ../vendor/web_pen_sdk/PenCotroller/Packet.ts
+  var Packet = class {
+    constructor() {
+      this.Cmd = 0;
+      this.Result = 0;
+      this.mIndex = 0;
+      this.Data = new Uint8Array(0);
+      this.length = 0;
+    }
+    GetChecksum() {
+      if (this.Data.length === 0) {
+        return 0;
+      }
+      let length = 0;
+      if (arguments.length === 0) {
+        length = this.Data.length - this.mIndex;
+      } else {
+        length = arguments[0];
+      }
+      let bytes = this.Data.slice(this.mIndex, this.mIndex + length);
+      let checkSum = 0;
+      bytes.forEach((b) => checkSum += b & 255);
+      return checkSum & 255;
+    }
+    CheckMoreData() {
+      return this.Data.length > this.mIndex;
+    }
+    Move(size) {
+      this.mIndex += size;
+    }
+    /**
+     * 패킷에서 1바이트 크기의 값을 반환받는 함수
+     * @returns
+     */
+    GetByte() {
+      return this.GetBytes(1)[0];
+    }
+    /**
+     * 패킷에서 원하는 바이트 크기만큼의 값을 반환하고, 바이트 위치값을 수정하는 함수
+     * @param {(number | null)} arg
+     * @returns
+     */
+    GetBytes(arg) {
+      let size = 0;
+      if (arg) {
+        size = arg;
+      } else {
+        size = this.Data.length - this.mIndex;
+      }
+      let result = this.Data.slice(this.mIndex, this.mIndex + size);
+      if (result.length === 0) {
+        log("zero data");
+      }
+      this.Move(size);
+      return result;
+    }
+    /**
+     * 패킷에서 4바이트 크기의 값을 반환받는 함수
+     * @returns
+     */
+    GetInt() {
+      return byteArrayToInt(this.GetBytes(4));
+    }
+    /**
+     * 패킷에서 2바이트 크기의 값을 반환받는 함수
+     * @returns
+     */
+    GetShort() {
+      let u82 = this.GetBytes(2);
+      let v = byteArrayToShort(u82);
+      return v;
+    }
+    /**
+     * 패킷에서 8바이트 크기의 값을 반환받는 함수
+     * @returns
+     */
+    GetLong() {
+      return byteArrayToLong(this.GetBytes(8));
+    }
+    /**
+     * 패킷에서 원하는 바이트 크기만큼의 값을 반환받는 함수
+     * @param {number} length
+     * @returns
+     */
+    GetString(length) {
+      let bytes = this.GetBytes(length);
+      const filteru8 = bytes.filter((byte) => byte !== 0);
+      return new TextDecoder().decode(filteru8);
+    }
+  };
+  var PacketBuilder = class {
+    constructor() {
+      this.mPacket = new Packet();
+    }
+    cmd(cmd) {
+      this.mPacket.Cmd = cmd;
+      return this;
+    }
+    result(code) {
+      this.mPacket.Result = code;
+      return this;
+    }
+    data(data) {
+      this.mPacket.Data = data;
+      return this;
+    }
+    length(length) {
+      this.mPacket.length = length;
+      return this;
+    }
+    Build() {
+      return this.mPacket;
+    }
+  };
+
+  // ../vendor/web_pen_sdk/API/PageInfo.ts
+  var PageInfo = class {
+    constructor(s, o, b, p) {
+      this.section = s;
+      this.owner = o;
+      this.book = b;
+      this.page = p;
+    }
+  };
+
+  // ../vendor/web_pen_sdk/API/Dot.ts
+  var DotTypes = Object.freeze({
+    PEN_DOWN: 0,
+    PEN_MOVE: 1,
+    PEN_UP: 2,
+    PEN_HOVER: 3,
+    PEN_INFO: 4,
+    PEN_ERROR: 5
+  });
+  var Dot = class _Dot {
+    constructor() {
+      this.pageInfo = new PageInfo(0, 0, 0, 0);
+      this.x = 0;
+      this.y = 0;
+      this.angle = {
+        tx: 0,
+        ty: 0,
+        twist: 0
+      };
+      this.f = 0;
+      this.color = 255;
+      this.timeDiff = 0;
+      this.timeStamp = 0;
+      this.dotType = _Dot.DotTypes.PEN_DOWN;
+      this.penTipType = 0;
+    }
+    static MakeDot(paper, x2, y, force, type, penTipType, color, angel = { tx: 0, ty: 0, twist: 0 }) {
+      let builder = new DotBuilder();
+      const xx = parseFloat(x2.toFixed(2));
+      const yy = parseFloat(y.toFixed(2));
+      builder.owner(paper.owner).section(paper.section).note(paper.note).page(paper.page).timeDiff(paper.TimeDiff).timeStamp(paper.Time).coord(xx, yy).force(force).dotType(type).penTipType(penTipType).color(color).angle(angel);
+      return builder.Build();
+    }
+    Clone() {
+      let newDot = new _Dot();
+      newDot.pageInfo = this.pageInfo;
+      newDot.x = this.x;
+      newDot.y = this.y;
+      newDot.f = this.f;
+      newDot.timeDiff = this.timeDiff;
+      newDot.timeStamp = this.timeStamp;
+      newDot.dotType = this.dotType;
+      newDot.penTipType = this.penTipType;
+      newDot.color = this.color;
+      newDot.angle = this.angle;
+      return newDot;
+    }
+    static get DotTypes() {
+      return DotTypes;
+    }
+  };
+  var DotBuilder = class {
+    constructor() {
+      this.mDot = new Dot();
+    }
+    section(section) {
+      this.mDot.pageInfo.section = section;
+      return this;
+    }
+    owner(owner) {
+      this.mDot.pageInfo.owner = owner;
+      return this;
+    }
+    note(note) {
+      this.mDot.pageInfo.book = note;
+      return this;
+    }
+    page(page) {
+      this.mDot.pageInfo.page = page;
+      return this;
+    }
+    timeDiff(timeDiff) {
+      this.mDot.timeDiff = timeDiff;
+      return this;
+    }
+    timeStamp(timeStamp) {
+      this.mDot.timeStamp = timeStamp;
+      return this;
+    }
+    coord(x2, y) {
+      this.mDot.x = x2;
+      this.mDot.y = y;
+      return this;
+    }
+    angle(angle) {
+      this.mDot.angle.tx = angle.tx;
+      this.mDot.angle.ty = angle.ty;
+      this.mDot.angle.twist = angle.twist;
+      return this;
+    }
+    tilt(tx, ty) {
+      this.mDot.angle.tx = tx;
+      this.mDot.angle.ty = ty;
+      return this;
+    }
+    twist(twist) {
+      this.mDot.angle.twist = twist;
+      return this;
+    }
+    force(force) {
+      this.mDot.f = force;
+      return this;
+    }
+    dotType(dotType) {
+      this.mDot.dotType = dotType;
+      return this;
+    }
+    penTipType(penTipType) {
+      this.mDot.penTipType = penTipType;
+      return this;
+    }
+    color(color) {
+      this.mDot.color = color;
+      return this;
+    }
+    Build() {
+      return this.mDot;
+    }
+  };
+  var Dot_default = Dot;
+
+  // ../vendor/web_pen_sdk/PenCotroller/CMD.ts
+  var CMD = {
+    /**디바이스에 대한 버전(정보)을 요청하는 커맨드, 펜과 연결시 최우선 수행*/
+    VERSION_REQUEST: 1,
+    /**디바이스에 대한 버전(정보)을 반환하는 커맨드 */
+    VERSION_RESPONSE: 129,
+    /**비밀번호를 입력하는 커맨드, 디바이스 버전정보에 따라 사용 여부 결정*/
+    PASSWORD_REQUEST: 2,
+    /**입력된 비밀번호의 결과 값을 반환하는 커맨드 */
+    PASSWORD_RESPONSE: 130,
+    /**비밀번호를 변경을 요청하는 커맨드, 비밀번호 이용한 연결상태일 때만 사용 가능 */
+    PASSWORD_CHANGE_REQUEST: 3,
+    /**비밀번호 변경에 대한 결과 값을 반환하는 커맨드 */
+    PASSWORD_CHANGE_RESPONSE: 131,
+    /**각종 펜 설정에 대한 정보를 요청하는 커맨드 */
+    SETTING_INFO_REQUEST: 4,
+    /**펜 설정 정보를 반환하는 커맨드, SettingInfo 참고*/
+    SETTING_INFO_RESPONSE: 132,
+    /**배터리 알람이 발생했을 때, 반환되는 커맨드 */
+    LOW_BATTERY_EVENT: 97,
+    /**전원이 꺼졌을 때 이유를 반환하는 커맨드 */
+    SHUTDOWN_EVENT: 98,
+    /**각종 펜 설정의 변경을 요청하는 커맨드 */
+    SETTING_CHANGE_REQUEST: 5,
+    /**펜 설정 변경의 성공여부를 반환하는 커맨드 */
+    SETTING_CHANGE_RESPONSE: 133,
+    /**실시간 필기 데이터를 요청하는 커맨드 */
+    ONLINE_DATA_REQUEST: 17,
+    /**실시간 필기 데이터 요청에 대한 응답을 반환하는 커맨드 */
+    ONLINE_DATA_RESPONSE: 145,
+    /**펜 UP/DOWN 시 시각, 펜의 타입, 펜의 색상을 반환하는 커맨드 */
+    ONLINE_PEN_UPDOWN_EVENT: 99,
+    /**현재 펜이 입력된 종이의 정보를 반환하는 커맨드 */
+    ONLINE_PAPER_INFO_EVENT: 100,
+    /**펜이 입력되었을 때 각종 Dot 정보(좌표 값, 기울기 등)를 반환하는 커맨드 */
+    ONLINE_PEN_DOT_EVENT: 101,
+    /**펜이 입력되었지만 에러가 발생했을 경우, Dot 간의 시간차, 펜 카메라를 통해 들어오는 이미지 밝기, 노출 시간, NADC(ncode처리모듈) 에러코드 등을 반환하는 커맨드 */
+    ONLINE_PEN_ERROR_EVENT: 104,
+    /**펜 DOWN 시 시각, 펜의 타입, 펜의 색상을 반환하는 커맨드, count 요소 추가 */
+    ONLINE_NEW_PEN_DOWN_EVENT: 105,
+    /**펜 UP 시 시각, 전송 및 처리 된 도트, 이미지 개수를 반환하는 커맨드, count 요소 추가 */
+    ONLINE_NEW_PEN_UP_EVENT: 106,
+    /**현재 펜이 입력된 종이의 정보를 반환하는 커맨드, count 요소 추가 */
+    ONLINE_NEW_PAPER_INFO_EVENT: 107,
+    /**펜이 입력되었을 때 각종 Dot 정보(좌표 값, 기울기 등)를 반환하는 커맨드, count 요소 추가 */
+    ONLINE_NEW_PEN_DOT_EVENT: 108,
+    /**펜이 입력되었지만 에러가 발생했을 경우, Dot 간의 시간차, 펜 카메라를 통해 들어오는 이미지 밝기, 노출 시간, NADC(ncode처리모듈) 에러코드 등을 반환하는 커맨드, count 요소 추가 */
+    ONLINE_NEW_PEN_ERROR_EVENT: 109,
+    /**펜이 hover Mode일 경우 펜의 각종 Dot 정보(좌표 값, 기울기 등)를 반환하는 커맨드*/
+    ONLINE_PEN_HOVER_EVENT: 111,
+    /**오프라인 데이터의 종이 정보(section, owner, note) 리스트를 요청하는 커맨드 */
+    OFFLINE_NOTE_LIST_REQUEST: 33,
+    /**오프라인 데이터의 종이 정보(section, owner, note) 리스트를 반환하는 커맨드 */
+    OFFLINE_NOTE_LIST_RESPONSE: 161,
+    /**오프라인 데이터의 종이 정보(page) 리스트를 요청하는 커맨드 */
+    OFFLINE_PAGE_LIST_REQUEST: 34,
+    /**오프라인 데이터의 종이 정보(page) 리스트를 요청하는 커맨드*/
+    OFFLINE_PAGE_LIST_RESPONSE: 162,
+    /**오프라인 데이터의 필기 정보 전송을 요청하는 커맨드*/
+    OFFLINE_DATA_REQUEST: 35,
+    /**오프라인 데이터의 필기 정보 전송 요청에 대한 응답을 반환하는 커맨드  */
+    OFFLINE_DATA_RESPONSE: 163,
+    /**오프라인 데이터의 필기 정보를 전송하는 커맨드, PEN->APP */
+    OFFLINE_PACKET_REQUEST: 36,
+    /**오프라인 데이터의 필기 정보 전송에 대한 결과값을 반환하는 커맨드, APP->PEN */
+    OFFLINE_PACKET_RESPONSE: 164,
+    /**오프라인 데이터의 삭제를 요청하는 커맨드, note 단위 삭제 */
+    OFFLINE_DATA_DELETE_REQUEST: 37,
+    /**오프라인 데이터 삭제 요청에 대한 응답을 반환하는 커맨드 */
+    OFFLINE_DATA_DELETE_RESPONSE: 165,
+    /**펌웨어 업데이트를 요청하는 커맨드 */
+    FIRMWARE_UPLOAD_REQUEST: 49,
+    /**펌웨어 업데이트 요청에 대한 응답을 반환하는 커맨드 */
+    FIRMWARE_UPLOAD_RESPONSE: 177,
+    /**펌웨어 업데이트를 위해 파일을 전송받는 커맨드, PEN->APP */
+    FIRMWARE_PACKET_REQUEST: 50,
+    /**펌웨어 업데이트 위해 파일을 전송하는 커맨드, APP->PEN */
+    FIRMWARE_PACKET_RESPONSE: 178,
+    /**펜에 동록된 프로파일 생성, 삭제, 조회 등을 요청하는 커맨드*/
+    PEN_PROFILE_REQUEST: 65,
+    /**프로파일 요청에 대한 응답을 반환하는 커맨드 */
+    PEN_PROFILE_RESPONSE: 193,
+    // Only Touch and play
+    RES_PDS: 115,
+    REQ_LOG_INFO: 116,
+    RES_LOG_INFO: 244,
+    REQ_LOG_DATA: 117,
+    RES_LOG_DATA: 245
+  };
+  var CMD_default = CMD;
+
+  // ../vendor/web_pen_sdk/API/PenMessageType.ts
+  var PenMessageType = {
+    /**
+     Pens when the pen authorized, the events that occur
+     - data: nil
+     */
+    PEN_AUTHORIZED: 1,
+    /**
+     Request Password, the events that occur
+     - data: PenPasswordStruct?
+     */
+    PEN_PASSWORD_REQUEST: 2,
+    /**
+     Pens when the pen disconnected, the events that occur
+     - data: nil
+     */
+    PEN_DISCONNECTED: 4,
+    /**
+     * Pens when the connection is successful, the events that occur
+     - data: nil
+     */
+    PEN_CONNECTION_SUCCESS: 6,
+    /**
+     The status(battery, memory, ...) of pen
+     - data: PenSettingStruct
+     */
+    PEN_SETTING_INFO: 17,
+    /**
+     The constant PEN_SETUP_SUCCESS.
+     - data: PenSetupType
+     */
+    PEN_SETUP_SUCCESS: 18,
+    /**
+     The constant PEN_SETUP_FAILURE.
+     - data: ErrorCode
+     */
+    PEN_SETUP_FAILURE: 19,
+    /**
+     The constant PEN_USING_NOTE_SET_RESULT.
+     - data: Result
+     */
+    PEN_USING_NOTE_SET_RESULT: 26,
+    /**
+     The constant PASSWORD_SETUP_SUCCESS.
+     - data: UsingPassword (isPenUsingPassword: Boolean)
+     */
+    PASSWORD_SETUP_SUCCESS: 82,
+    /**
+     The constant PASSWORD_SETUP_FAILURE.
+     - data: PenPasswordChangeStruct
+     */
+    PASSWORD_SETUP_FAILURE: 83,
+    /**
+     * The constant PEN_SETUP_FAILURE_ILLEGAL_PASSWORD_0000.
+     * data: nil
+     */
+    PEN_ILLEGAL_PASSWORD_0000: 84,
+    /**
+     The constant EVENT_LOW_BATTERY.
+     - data : Int (%)
+     */
+    EVENT_LOW_BATTERY: 99,
+    /**
+     - data: PowerOffReason(0: autoPowerOffTime, 1: lowBattery, 2: update, 3: powerKey, 4: penCapPowerOff, 
+      5: alert(SystemError), 6: usbDiskIn(BTDisconnected), 7: passwordFail, 8: testToolDisconnected)
+     */
+    EVENT_POWER_OFF: 100,
+    /**
+     Message showing the status of the firmware upgrade pen
+     - data : Float( 0 ~ 100.0 %)
+     */
+    PEN_FW_UPGRADE_STATUS: 34,
+    /**
+     * When the firmware upgrade is successful, the pen events that occur
+     */
+    PEN_FW_UPGRADE_SUCCESS: 35,
+    /**
+     * When the firmware upgrade is fails, the pen events that occur
+     */
+    PEN_FW_UPGRADE_FAILURE: 36,
+    /**
+     * When the firmware upgrade is suspended, the pen events that occur
+     */
+    PEN_FW_UPGRADE_SUSPEND: 37,
+    /**
+     Off-line data stored in the pen's
+     - data: [(SectionId: UInt8, OnerId: UInt32, Note(Book)Id: UInt32)] Tuple List
+     */
+    OFFLINE_DATA_NOTE_LIST: 48,
+    /**
+     Off-line data stored in the pen's
+     - data: [PageId : UInt32] List
+     */
+    OFFLINE_DATA_PAGE_LIST: 49,
+    /**
+     The constant OFFLINE_DATA_SEND_START.
+     - data: nil
+     */
+    OFFLINE_DATA_SEND_START: 50,
+    /**
+     The constant OFFLINE_DATA_SEND_STATUS.
+     - data : Float(0 ~ 100.0 %)
+     */
+    OFFLINE_DATA_SEND_STATUS: 51,
+    /**
+     The constant OFFLINE_DATA_SEND_SUCCESS.
+     - data : OffLineData
+     */
+    OFFLINE_DATA_SEND_SUCCESS: 52,
+    /**
+     The constant OFFLINE_DATA_SEND_FAILURE.
+     - data: nil
+     */
+    OFFLINE_DATA_SEND_FAILURE: 53,
+    /**
+     The constant OFFLINE_DATA_DELETE_RESPONSE.
+     - data: Result
+     */
+    OFFLINE_DATA_DELETE_RESPONSE: 165,
+    /**
+     * Pens when the connection fails cause duplicate BT connection, an event that occurs
+     */
+    PEN_CONNECTION_FAILURE_BTDUPLICATE: 84,
+    /**
+     Pens Profile (key,value)
+     - data: ProfileStruct
+     */
+    PEN_PROFILE: 193,
+    /**
+     Pens PDS(for touch and play)
+     - data: PDSStruct
+     */
+    RES_PDS: 115,
+    /**
+     Pens Error
+     - data: DotError
+     */
+    EVENT_DOT_ERROR: 104,
+    /**
+     Pens Checking PUI
+     - data: Command
+     */
+    EVENT_DOT_PUI: 105,
+    /**
+     Pens Log Info(for touch and play)
+     - data: LogInfoStruct
+     */
+    RES_LOG_INFO: 244,
+    /**
+     Pens Log Data(for touch and play)
+     - data: LogInfoDataStruct
+     */
+    RES_LOG_DATA: 245
+  };
+  var PenMessageType_default = PenMessageType;
+  var SettingType = {
+    TimeStamp: 1,
+    AutoPowerOffTime: 2,
+    PenCapOff: 3,
+    AutoPowerOn: 4,
+    Beep: 5,
+    Hover: 6,
+    OfflineData: 7,
+    LedColor: 8,
+    Sensitivity: 9,
+    UsbMode: 10,
+    DownSampling: 11,
+    BtLocalName: 12,
+    FscSensitivity: 13,
+    DataTransmissionType: 14,
+    BeepAndLight: 16,
+    InitDisk: 17
+  };
+  var PenTipType = {
+    Normal: 0,
+    Eraser: 1
+  };
+  var ErrorType = {
+    MissingPenUp: 1,
+    MissingPenDown: 2,
+    InvalidTime: 3,
+    MissingPenDownPenMove: 4,
+    ImageProcessingError: 5,
+    InvalidEventCount: 6,
+    MissingPageChange: 7,
+    MissingPenMove: 8
+  };
+  var ProfileType = {
+    CreateProfile: 1,
+    DeleteProfile: 2,
+    InfoProfile: 3,
+    WriteProfileValue: 17,
+    ReadProfileValue: 18,
+    DeleteProfileValue: 19
+  };
+  var FirmwareStatusType = {
+    STATUS_START: 0,
+    STATUS_CONTINUE: 1,
+    STATUS_END: 2,
+    STATUS_ERROR: 3
+  };
+
+  // ../vendor/web_pen_sdk/Model/Response.ts
+  function VersionInfo(packet) {
+    const DeviceName = packet.GetString(16);
+    const FirmwareVersion = packet.GetString(16);
+    const ProtocolVersion = packet.GetString(8);
+    const SubName = packet.GetString(16);
+    const DeviceType = packet.GetShort();
+    const MacAddress = toHexString(packet.GetBytes(6));
+    const PressureSensorType = packet.GetByte();
+    const CompanyCode = packet.GetShort();
+    const ProductCode = packet.GetByte();
+    const ColorCode = packet.GetByte();
+    let IsSupportCompress = false;
+    if (parseFloat(ProtocolVersion) >= parseFloat("2.22")) {
+      IsSupportCompress = packet.GetByte() === 1 ? true : false;
+    }
+    const versionInfo = {
+      DeviceName,
+      FirmwareVersion,
+      ProtocolVersion,
+      SubName,
+      DeviceType,
+      MacAddress,
+      PressureSensorType,
+      CompanyCode,
+      ProductCode,
+      ColorCode,
+      IsSupportCompress
+    };
+    return versionInfo;
+  }
+  function SettingInfo(packet) {
+    let lockyn = packet.GetByte() === 1;
+    let pwdMaxRetryCount = packet.GetByte();
+    let pwdRetryCount = packet.GetByte();
+    let time = packet.GetLong();
+    let autoPowerOffTime = packet.GetShort();
+    let maxForce = packet.GetShort();
+    let usedStorage = packet.GetByte();
+    let penCapOff = packet.GetByte() === 1;
+    let autoPowerON = packet.GetByte() === 1;
+    let beep = packet.GetByte() === 1;
+    let hover = packet.GetByte() === 1;
+    let batteryLeft = packet.GetByte();
+    let useOffline = packet.GetByte() === 1;
+    let fsrStep = packet.GetByte();
+    let settingInfo = {
+      Locked: lockyn,
+      ResetCount: pwdMaxRetryCount,
+      RetryCount: pwdRetryCount,
+      TimeStamp: time,
+      AutoShutdownTime: autoPowerOffTime,
+      MaxForce: maxForce,
+      Battery: batteryLeft,
+      UsedMem: usedStorage,
+      UseOfflineData: useOffline,
+      AutoPowerOn: autoPowerON,
+      PenCapPower: penCapOff,
+      HoverMode: hover,
+      Beep: beep,
+      PenSensitivity: fsrStep
+    };
+    return settingInfo;
+  }
+  function SettingChange(packet) {
+    let SettingType2 = packet.GetByte();
+    let result = packet.GetByte() === 0;
+    return { SettingType: SettingType2, result };
+  }
+  function Password(packet) {
+    let status2 = packet.GetByte();
+    let RetryCount = packet.GetByte();
+    let ResetCount = packet.GetByte();
+    return { status: status2, RetryCount, ResetCount };
+  }
+  function PasswordChange(packet) {
+    let RetryCount = packet.GetByte();
+    let ResetCount = packet.GetByte();
+    let status2 = packet.GetByte();
+    return { RetryCount, ResetCount, status: status2 };
+  }
+  function PDS(packet) {
+    let owner = packet.GetInt();
+    let section = packet.GetInt();
+    let note = packet.GetInt();
+    let page = packet.GetInt();
+    let x2 = packet.GetInt();
+    let y = packet.GetInt();
+    let fx = packet.GetShort();
+    let fy = packet.GetShort();
+    return { section, owner, note, page, x: x2, y, fx, fy };
+  }
+  function NoteList(packet) {
+    let length = packet.GetShort();
+    let result = [];
+    for (var i2 = 0; i2 < length; i2++) {
+      let rb = packet.GetBytes(4);
+      let [section, owner] = GetSectionOwner(rb);
+      let note = packet.GetInt();
+      result.push({ Section: section, Owner: owner, Note: note });
+    }
+    return result;
+  }
+  function PageList(packet) {
+    let rb = packet.GetBytes(4);
+    let [section, owner] = GetSectionOwner(rb);
+    let note = packet.GetInt();
+    let length = packet.GetShort();
+    let pages = [];
+    for (let i2 = 0; i2 < length; i2++) {
+      pages.push(packet.GetInt());
+    }
+    let result = {
+      Section: section,
+      Owner: owner,
+      Note: note,
+      Pages: pages
+    };
+    return result;
+  }
+  var ProfileData = (packet) => {
+    const profileName = packet.GetString(8);
+    const ptype = packet.GetByte();
+    let status2 = 0;
+    let keyCount = 0;
+    let key = "";
+    let values = [];
+    let result = {
+      profileName,
+      type: "0x" + ptype.toString(16)
+    };
+    switch (ptype) {
+      case ProfileType.CreateProfile:
+        status2 = packet.GetByte();
+        result.status = "0x" + status2.toString(16);
+        break;
+      case ProfileType.DeleteProfile:
+        status2 = packet.GetByte();
+        result.status = "0x" + status2.toString(16);
+        break;
+      case ProfileType.InfoProfile:
+        status2 = packet.GetByte();
+        const allSectorCount = packet.GetShort();
+        const sectorSize = packet.GetShort();
+        const usedSectorCount = packet.GetShort();
+        const usedKeySectorCount = packet.GetShort();
+        result.status = "0x" + status2.toString(16);
+        result.allSectorCount = allSectorCount, result.sectorSize = sectorSize, result.usedSectorCount = usedSectorCount, result.usedKeySectorCount = usedKeySectorCount;
+        break;
+      case ProfileType.WriteProfileValue:
+        keyCount = packet.GetByte();
+        for (let i2 = 0; i2 < keyCount; i2++) {
+          key = packet.GetString(16);
+          status2 = packet.GetByte();
+          values.push({ key, status: "0x" + status2.toString(16) });
+        }
+        result.keyCount = keyCount, result.values = values;
+        break;
+      case ProfileType.ReadProfileValue:
+        keyCount = packet.GetByte();
+        for (let i2 = 0; i2 < keyCount; i2++) {
+          key = packet.GetString(16);
+          status2 = packet.GetByte();
+          const dataLength = packet.GetShort();
+          const data = packet.GetBytes(dataLength);
+          const str = String.fromCharCode(...data);
+          values.push({ key, status: "0x" + status2.toString(16), dataLength, data: str });
+        }
+        result.keyCount = keyCount, result.values = values;
+        break;
+      case ProfileType.DeleteProfileValue:
+        keyCount = packet.GetByte();
+        for (let i2 = 0; i2 < keyCount; i2++) {
+          key = packet.GetString(16);
+          status2 = packet.GetByte();
+          values.push({ key, status: "0x" + status2.toString(16) });
+        }
+        result.keyCount = keyCount, result.values = values;
+        break;
+    }
+    return result;
+  };
+
+  // ../node_modules/fflate/esm/browser.js
+  var u8 = Uint8Array;
+  var u16 = Uint16Array;
+  var i32 = Int32Array;
+  var fleb = new u8([
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    4,
+    4,
+    4,
+    4,
+    5,
+    5,
+    5,
+    5,
+    0,
+    /* unused */
+    0,
+    0,
+    /* impossible */
+    0
+  ]);
+  var fdeb = new u8([
+    0,
+    0,
+    0,
+    0,
+    1,
+    1,
+    2,
+    2,
+    3,
+    3,
+    4,
+    4,
+    5,
+    5,
+    6,
+    6,
+    7,
+    7,
+    8,
+    8,
+    9,
+    9,
+    10,
+    10,
+    11,
+    11,
+    12,
+    12,
+    13,
+    13,
+    /* unused */
+    0,
+    0
+  ]);
+  var clim = new u8([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
+  var freb = function(eb, start) {
+    var b = new u16(31);
+    for (var i2 = 0; i2 < 31; ++i2) {
+      b[i2] = start += 1 << eb[i2 - 1];
+    }
+    var r = new i32(b[30]);
+    for (var i2 = 1; i2 < 30; ++i2) {
+      for (var j = b[i2]; j < b[i2 + 1]; ++j) {
+        r[j] = j - b[i2] << 5 | i2;
+      }
+    }
+    return { b, r };
+  };
+  var _a = freb(fleb, 2);
+  var fl = _a.b;
+  var revfl = _a.r;
+  fl[28] = 258, revfl[258] = 28;
+  var _b = freb(fdeb, 0);
+  var fd = _b.b;
+  var revfd = _b.r;
+  var rev = new u16(32768);
+  for (i = 0; i < 32768; ++i) {
+    x = (i & 43690) >> 1 | (i & 21845) << 1;
+    x = (x & 52428) >> 2 | (x & 13107) << 2;
+    x = (x & 61680) >> 4 | (x & 3855) << 4;
+    rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
+  }
+  var x;
+  var i;
+  var hMap = (function(cd, mb, r) {
+    var s = cd.length;
+    var i2 = 0;
+    var l = new u16(mb);
+    for (; i2 < s; ++i2) {
+      if (cd[i2])
+        ++l[cd[i2] - 1];
+    }
+    var le = new u16(mb);
+    for (i2 = 1; i2 < mb; ++i2) {
+      le[i2] = le[i2 - 1] + l[i2 - 1] << 1;
+    }
+    var co;
+    if (r) {
+      co = new u16(1 << mb);
+      var rvb = 15 - mb;
+      for (i2 = 0; i2 < s; ++i2) {
+        if (cd[i2]) {
+          var sv = i2 << 4 | cd[i2];
+          var r_1 = mb - cd[i2];
+          var v = le[cd[i2] - 1]++ << r_1;
+          for (var m = v | (1 << r_1) - 1; v <= m; ++v) {
+            co[rev[v] >> rvb] = sv;
+          }
+        }
+      }
+    } else {
+      co = new u16(s);
+      for (i2 = 0; i2 < s; ++i2) {
+        if (cd[i2]) {
+          co[i2] = rev[le[cd[i2] - 1]++] >> 15 - cd[i2];
+        }
+      }
+    }
+    return co;
+  });
+  var flt = new u8(288);
+  for (i = 0; i < 144; ++i)
+    flt[i] = 8;
+  var i;
+  for (i = 144; i < 256; ++i)
+    flt[i] = 9;
+  var i;
+  for (i = 256; i < 280; ++i)
+    flt[i] = 7;
+  var i;
+  for (i = 280; i < 288; ++i)
+    flt[i] = 8;
+  var i;
+  var fdt = new u8(32);
+  for (i = 0; i < 32; ++i)
+    fdt[i] = 5;
+  var i;
+  var flm = /* @__PURE__ */ hMap(flt, 9, 0);
+  var flrm = /* @__PURE__ */ hMap(flt, 9, 1);
+  var fdm = /* @__PURE__ */ hMap(fdt, 5, 0);
+  var fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
+  var max = function(a) {
+    var m = a[0];
+    for (var i2 = 1; i2 < a.length; ++i2) {
+      if (a[i2] > m)
+        m = a[i2];
+    }
+    return m;
+  };
+  var bits = function(d, p, m) {
+    var o = p / 8 | 0;
+    return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
+  };
+  var bits16 = function(d, p) {
+    var o = p / 8 | 0;
+    return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
+  };
+  var shft = function(p) {
+    return (p + 7) / 8 | 0;
+  };
+  var slc = function(v, s, e) {
+    if (s == null || s < 0)
+      s = 0;
+    if (e == null || e > v.length)
+      e = v.length;
+    return new u8(v.subarray(s, e));
+  };
+  var ec = [
+    "unexpected EOF",
+    "invalid block type",
+    "invalid length/literal",
+    "invalid distance",
+    "stream finished",
+    "no stream handler",
+    ,
+    // determined by compression function
+    "no callback",
+    "invalid UTF-8 data",
+    "extra field too long",
+    "date not in range 1980-2099",
+    "filename too long",
+    "stream finishing",
+    "invalid zip data"
+    // determined by unknown compression method
+  ];
+  var err = function(ind, msg, nt) {
+    var e = new Error(msg || ec[ind]);
+    e.code = ind;
+    if (Error.captureStackTrace)
+      Error.captureStackTrace(e, err);
+    if (!nt)
+      throw e;
+    return e;
+  };
+  var inflt = function(dat, st, buf, dict) {
+    var sl = dat.length, dl = dict ? dict.length : 0;
+    if (!sl || st.f && !st.l)
+      return buf || new u8(0);
+    var noBuf = !buf;
+    var resize = noBuf || st.i != 2;
+    var noSt = st.i;
+    if (noBuf)
+      buf = new u8(sl * 3);
+    var cbuf = function(l2) {
+      var bl = buf.length;
+      if (l2 > bl) {
+        var nbuf = new u8(Math.max(bl * 2, l2));
+        nbuf.set(buf);
+        buf = nbuf;
+      }
+    };
+    var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
+    var tbts = sl * 8;
+    do {
+      if (!lm) {
+        final = bits(dat, pos, 1);
+        var type = bits(dat, pos + 1, 3);
+        pos += 3;
+        if (!type) {
+          var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
+          if (t > sl) {
+            if (noSt)
+              err(0);
+            break;
+          }
+          if (resize)
+            cbuf(bt + l);
+          buf.set(dat.subarray(s, t), bt);
+          st.b = bt += l, st.p = pos = t * 8, st.f = final;
+          continue;
+        } else if (type == 1)
+          lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
+        else if (type == 2) {
+          var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
+          var tl = hLit + bits(dat, pos + 5, 31) + 1;
+          pos += 14;
+          var ldt = new u8(tl);
+          var clt = new u8(19);
+          for (var i2 = 0; i2 < hcLen; ++i2) {
+            clt[clim[i2]] = bits(dat, pos + i2 * 3, 7);
+          }
+          pos += hcLen * 3;
+          var clb = max(clt), clbmsk = (1 << clb) - 1;
+          var clm = hMap(clt, clb, 1);
+          for (var i2 = 0; i2 < tl; ) {
+            var r = clm[bits(dat, pos, clbmsk)];
+            pos += r & 15;
+            var s = r >> 4;
+            if (s < 16) {
+              ldt[i2++] = s;
+            } else {
+              var c = 0, n = 0;
+              if (s == 16)
+                n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i2 - 1];
+              else if (s == 17)
+                n = 3 + bits(dat, pos, 7), pos += 3;
+              else if (s == 18)
+                n = 11 + bits(dat, pos, 127), pos += 7;
+              while (n--)
+                ldt[i2++] = c;
+            }
+          }
+          var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
+          lbt = max(lt);
+          dbt = max(dt);
+          lm = hMap(lt, lbt, 1);
+          dm = hMap(dt, dbt, 1);
+        } else
+          err(1);
+        if (pos > tbts) {
+          if (noSt)
+            err(0);
+          break;
+        }
+      }
+      if (resize)
+        cbuf(bt + 131072);
+      var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
+      var lpos = pos;
+      for (; ; lpos = pos) {
+        var c = lm[bits16(dat, pos) & lms], sym = c >> 4;
+        pos += c & 15;
+        if (pos > tbts) {
+          if (noSt)
+            err(0);
+          break;
+        }
+        if (!c)
+          err(2);
+        if (sym < 256)
+          buf[bt++] = sym;
+        else if (sym == 256) {
+          lpos = pos, lm = null;
+          break;
+        } else {
+          var add = sym - 254;
+          if (sym > 264) {
+            var i2 = sym - 257, b = fleb[i2];
+            add = bits(dat, pos, (1 << b) - 1) + fl[i2];
+            pos += b;
+          }
+          var d = dm[bits16(dat, pos) & dms], dsym = d >> 4;
+          if (!d)
+            err(3);
+          pos += d & 15;
+          var dt = fd[dsym];
+          if (dsym > 3) {
+            var b = fdeb[dsym];
+            dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
+          }
+          if (pos > tbts) {
+            if (noSt)
+              err(0);
+            break;
+          }
+          if (resize)
+            cbuf(bt + 131072);
+          var end = bt + add;
+          if (bt < dt) {
+            var shift = dl - dt, dend = Math.min(dt, end);
+            if (shift + bt < 0)
+              err(3);
+            for (; bt < dend; ++bt)
+              buf[bt] = dict[shift + bt];
+          }
+          for (; bt < end; ++bt)
+            buf[bt] = buf[bt - dt];
+        }
+      }
+      st.l = lm, st.p = lpos, st.b = bt, st.f = final;
+      if (lm)
+        final = 1, st.m = lbt, st.d = dm, st.n = dbt;
+    } while (!final);
+    return bt != buf.length && noBuf ? slc(buf, 0, bt) : buf.subarray(0, bt);
+  };
+  var wbits = function(d, p, v) {
+    v <<= p & 7;
+    var o = p / 8 | 0;
+    d[o] |= v;
+    d[o + 1] |= v >> 8;
+  };
+  var wbits16 = function(d, p, v) {
+    v <<= p & 7;
+    var o = p / 8 | 0;
+    d[o] |= v;
+    d[o + 1] |= v >> 8;
+    d[o + 2] |= v >> 16;
+  };
+  var hTree = function(d, mb) {
+    var t = [];
+    for (var i2 = 0; i2 < d.length; ++i2) {
+      if (d[i2])
+        t.push({ s: i2, f: d[i2] });
+    }
+    var s = t.length;
+    var t2 = t.slice();
+    if (!s)
+      return { t: et, l: 0 };
+    if (s == 1) {
+      var v = new u8(t[0].s + 1);
+      v[t[0].s] = 1;
+      return { t: v, l: 1 };
+    }
+    t.sort(function(a, b) {
+      return a.f - b.f;
+    });
+    t.push({ s: -1, f: 25001 });
+    var l = t[0], r = t[1], i0 = 0, i1 = 1, i22 = 2;
+    t[0] = { s: -1, f: l.f + r.f, l, r };
+    while (i1 != s - 1) {
+      l = t[t[i0].f < t[i22].f ? i0++ : i22++];
+      r = t[i0 != i1 && t[i0].f < t[i22].f ? i0++ : i22++];
+      t[i1++] = { s: -1, f: l.f + r.f, l, r };
+    }
+    var maxSym = t2[0].s;
+    for (var i2 = 1; i2 < s; ++i2) {
+      if (t2[i2].s > maxSym)
+        maxSym = t2[i2].s;
+    }
+    var tr = new u16(maxSym + 1);
+    var mbt = ln(t[i1 - 1], tr, 0);
+    if (mbt > mb) {
+      var i2 = 0, dt = 0;
+      var lft = mbt - mb, cst = 1 << lft;
+      t2.sort(function(a, b) {
+        return tr[b.s] - tr[a.s] || a.f - b.f;
+      });
+      for (; i2 < s; ++i2) {
+        var i2_1 = t2[i2].s;
+        if (tr[i2_1] > mb) {
+          dt += cst - (1 << mbt - tr[i2_1]);
+          tr[i2_1] = mb;
+        } else
+          break;
+      }
+      dt >>= lft;
+      while (dt > 0) {
+        var i2_2 = t2[i2].s;
+        if (tr[i2_2] < mb)
+          dt -= 1 << mb - tr[i2_2]++ - 1;
+        else
+          ++i2;
+      }
+      for (; i2 >= 0 && dt; --i2) {
+        var i2_3 = t2[i2].s;
+        if (tr[i2_3] == mb) {
+          --tr[i2_3];
+          ++dt;
+        }
+      }
+      mbt = mb;
+    }
+    return { t: new u8(tr), l: mbt };
+  };
+  var ln = function(n, l, d) {
+    return n.s == -1 ? Math.max(ln(n.l, l, d + 1), ln(n.r, l, d + 1)) : l[n.s] = d;
+  };
+  var lc = function(c) {
+    var s = c.length;
+    while (s && !c[--s])
+      ;
+    var cl = new u16(++s);
+    var cli = 0, cln = c[0], cls = 1;
+    var w = function(v) {
+      cl[cli++] = v;
+    };
+    for (var i2 = 1; i2 <= s; ++i2) {
+      if (c[i2] == cln && i2 != s)
+        ++cls;
+      else {
+        if (!cln && cls > 2) {
+          for (; cls > 138; cls -= 138)
+            w(32754);
+          if (cls > 2) {
+            w(cls > 10 ? cls - 11 << 5 | 28690 : cls - 3 << 5 | 12305);
+            cls = 0;
+          }
+        } else if (cls > 3) {
+          w(cln), --cls;
+          for (; cls > 6; cls -= 6)
+            w(8304);
+          if (cls > 2)
+            w(cls - 3 << 5 | 8208), cls = 0;
+        }
+        while (cls--)
+          w(cln);
+        cls = 1;
+        cln = c[i2];
+      }
+    }
+    return { c: cl.subarray(0, cli), n: s };
+  };
+  var clen = function(cf, cl) {
+    var l = 0;
+    for (var i2 = 0; i2 < cl.length; ++i2)
+      l += cf[i2] * cl[i2];
+    return l;
+  };
+  var wfblk = function(out, pos, dat) {
+    var s = dat.length;
+    var o = shft(pos + 2);
+    out[o] = s & 255;
+    out[o + 1] = s >> 8;
+    out[o + 2] = out[o] ^ 255;
+    out[o + 3] = out[o + 1] ^ 255;
+    for (var i2 = 0; i2 < s; ++i2)
+      out[o + i2 + 4] = dat[i2];
+    return (o + 4 + s) * 8;
+  };
+  var wblk = function(dat, out, final, syms, lf, df, eb, li, bs, bl, p) {
+    wbits(out, p++, final);
+    ++lf[256];
+    var _a4 = hTree(lf, 15), dlt = _a4.t, mlb = _a4.l;
+    var _b2 = hTree(df, 15), ddt = _b2.t, mdb = _b2.l;
+    var _c = lc(dlt), lclt = _c.c, nlc = _c.n;
+    var _d = lc(ddt), lcdt = _d.c, ndc = _d.n;
+    var lcfreq = new u16(19);
+    for (var i2 = 0; i2 < lclt.length; ++i2)
+      ++lcfreq[lclt[i2] & 31];
+    for (var i2 = 0; i2 < lcdt.length; ++i2)
+      ++lcfreq[lcdt[i2] & 31];
+    var _e = hTree(lcfreq, 7), lct = _e.t, mlcb = _e.l;
+    var nlcc = 19;
+    for (; nlcc > 4 && !lct[clim[nlcc - 1]]; --nlcc)
+      ;
+    var flen = bl + 5 << 3;
+    var ftlen = clen(lf, flt) + clen(df, fdt) + eb;
+    var dtlen = clen(lf, dlt) + clen(df, ddt) + eb + 14 + 3 * nlcc + clen(lcfreq, lct) + 2 * lcfreq[16] + 3 * lcfreq[17] + 7 * lcfreq[18];
+    if (bs >= 0 && flen <= ftlen && flen <= dtlen)
+      return wfblk(out, p, dat.subarray(bs, bs + bl));
+    var lm, ll, dm, dl;
+    wbits(out, p, 1 + (dtlen < ftlen)), p += 2;
+    if (dtlen < ftlen) {
+      lm = hMap(dlt, mlb, 0), ll = dlt, dm = hMap(ddt, mdb, 0), dl = ddt;
+      var llm = hMap(lct, mlcb, 0);
+      wbits(out, p, nlc - 257);
+      wbits(out, p + 5, ndc - 1);
+      wbits(out, p + 10, nlcc - 4);
+      p += 14;
+      for (var i2 = 0; i2 < nlcc; ++i2)
+        wbits(out, p + 3 * i2, lct[clim[i2]]);
+      p += 3 * nlcc;
+      var lcts = [lclt, lcdt];
+      for (var it = 0; it < 2; ++it) {
+        var clct = lcts[it];
+        for (var i2 = 0; i2 < clct.length; ++i2) {
+          var len = clct[i2] & 31;
+          wbits(out, p, llm[len]), p += lct[len];
+          if (len > 15)
+            wbits(out, p, clct[i2] >> 5 & 127), p += clct[i2] >> 12;
+        }
+      }
+    } else {
+      lm = flm, ll = flt, dm = fdm, dl = fdt;
+    }
+    for (var i2 = 0; i2 < li; ++i2) {
+      var sym = syms[i2];
+      if (sym > 255) {
+        var len = sym >> 18 & 31;
+        wbits16(out, p, lm[len + 257]), p += ll[len + 257];
+        if (len > 7)
+          wbits(out, p, sym >> 23 & 31), p += fleb[len];
+        var dst = sym & 31;
+        wbits16(out, p, dm[dst]), p += dl[dst];
+        if (dst > 3)
+          wbits16(out, p, sym >> 5 & 8191), p += fdeb[dst];
+      } else {
+        wbits16(out, p, lm[sym]), p += ll[sym];
+      }
+    }
+    wbits16(out, p, lm[256]);
+    return p + ll[256];
+  };
+  var deo = /* @__PURE__ */ new i32([65540, 131080, 131088, 131104, 262176, 1048704, 1048832, 2114560, 2117632]);
+  var et = /* @__PURE__ */ new u8(0);
+  var dflt = function(dat, lvl, plvl, pre, post, st) {
+    var s = st.z || dat.length;
+    var o = new u8(pre + s + 5 * (1 + Math.ceil(s / 7e3)) + post);
+    var w = o.subarray(pre, o.length - post);
+    var lst = st.l;
+    var pos = (st.r || 0) & 7;
+    if (lvl) {
+      if (pos)
+        w[0] = st.r >> 3;
+      var opt = deo[lvl - 1];
+      var n = opt >> 13, c = opt & 8191;
+      var msk_1 = (1 << plvl) - 1;
+      var prev = st.p || new u16(32768), head = st.h || new u16(msk_1 + 1);
+      var bs1_1 = Math.ceil(plvl / 3), bs2_1 = 2 * bs1_1;
+      var hsh = function(i3) {
+        return (dat[i3] ^ dat[i3 + 1] << bs1_1 ^ dat[i3 + 2] << bs2_1) & msk_1;
+      };
+      var syms = new i32(25e3);
+      var lf = new u16(288), df = new u16(32);
+      var lc_1 = 0, eb = 0, i2 = st.i || 0, li = 0, wi = st.w || 0, bs = 0;
+      for (; i2 + 2 < s; ++i2) {
+        var hv = hsh(i2);
+        var imod = i2 & 32767, pimod = head[hv];
+        prev[imod] = pimod;
+        head[hv] = imod;
+        if (wi <= i2) {
+          var rem = s - i2;
+          if ((lc_1 > 7e3 || li > 24576) && (rem > 423 || !lst)) {
+            pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i2 - bs, pos);
+            li = lc_1 = eb = 0, bs = i2;
+            for (var j = 0; j < 286; ++j)
+              lf[j] = 0;
+            for (var j = 0; j < 30; ++j)
+              df[j] = 0;
+          }
+          var l = 2, d = 0, ch_1 = c, dif = imod - pimod & 32767;
+          if (rem > 2 && hv == hsh(i2 - dif)) {
+            var maxn = Math.min(n, rem) - 1;
+            var maxd = Math.min(32767, i2);
+            var ml = Math.min(258, rem);
+            while (dif <= maxd && --ch_1 && imod != pimod) {
+              if (dat[i2 + l] == dat[i2 + l - dif]) {
+                var nl = 0;
+                for (; nl < ml && dat[i2 + nl] == dat[i2 + nl - dif]; ++nl)
+                  ;
+                if (nl > l) {
+                  l = nl, d = dif;
+                  if (nl > maxn)
+                    break;
+                  var mmd = Math.min(dif, nl - 2);
+                  var md = 0;
+                  for (var j = 0; j < mmd; ++j) {
+                    var ti = i2 - dif + j & 32767;
+                    var pti = prev[ti];
+                    var cd = ti - pti & 32767;
+                    if (cd > md)
+                      md = cd, pimod = ti;
+                  }
+                }
+              }
+              imod = pimod, pimod = prev[imod];
+              dif += imod - pimod & 32767;
+            }
+          }
+          if (d) {
+            syms[li++] = 268435456 | revfl[l] << 18 | revfd[d];
+            var lin = revfl[l] & 31, din = revfd[d] & 31;
+            eb += fleb[lin] + fdeb[din];
+            ++lf[257 + lin];
+            ++df[din];
+            wi = i2 + l;
+            ++lc_1;
+          } else {
+            syms[li++] = dat[i2];
+            ++lf[dat[i2]];
+          }
+        }
+      }
+      for (i2 = Math.max(i2, wi); i2 < s; ++i2) {
+        syms[li++] = dat[i2];
+        ++lf[dat[i2]];
+      }
+      pos = wblk(dat, w, lst, syms, lf, df, eb, li, bs, i2 - bs, pos);
+      if (!lst) {
+        st.r = pos & 7 | w[pos / 8 | 0] << 3;
+        pos -= 7;
+        st.h = head, st.p = prev, st.i = i2, st.w = wi;
+      }
+    } else {
+      for (var i2 = st.w || 0; i2 < s + lst; i2 += 65535) {
+        var e = i2 + 65535;
+        if (e >= s) {
+          w[pos / 8 | 0] = lst;
+          e = s;
+        }
+        pos = wfblk(w, pos + 1, dat.subarray(i2, e));
+      }
+      st.i = s;
+    }
+    return slc(o, 0, pre + shft(pos) + post);
+  };
+  var adler = function() {
+    var a = 1, b = 0;
+    return {
+      p: function(d) {
+        var n = a, m = b;
+        var l = d.length | 0;
+        for (var i2 = 0; i2 != l; ) {
+          var e = Math.min(i2 + 2655, l);
+          for (; i2 < e; ++i2)
+            m += n += d[i2];
+          n = (n & 65535) + 15 * (n >> 16), m = (m & 65535) + 15 * (m >> 16);
+        }
+        a = n, b = m;
+      },
+      d: function() {
+        a %= 65521, b %= 65521;
+        return (a & 255) << 24 | (a & 65280) << 8 | (b & 255) << 8 | b >> 8;
+      }
+    };
+  };
+  var dopt = function(dat, opt, pre, post, st) {
+    if (!st) {
+      st = { l: 1 };
+      if (opt.dictionary) {
+        var dict = opt.dictionary.subarray(-32768);
+        var newDat = new u8(dict.length + dat.length);
+        newDat.set(dict);
+        newDat.set(dat, dict.length);
+        dat = newDat;
+        st.w = dict.length;
+      }
+    }
+    return dflt(dat, opt.level == null ? 6 : opt.level, opt.mem == null ? st.l ? Math.ceil(Math.max(8, Math.min(13, Math.log(dat.length))) * 1.5) : 20 : 12 + opt.mem, pre, post, st);
+  };
+  var wbytes = function(d, b, v) {
+    for (; v; ++b)
+      d[b] = v, v >>>= 8;
+  };
+  var gzs = function(d) {
+    if (d[0] != 31 || d[1] != 139 || d[2] != 8)
+      err(6, "invalid gzip data");
+    var flg = d[3];
+    var st = 10;
+    if (flg & 4)
+      st += (d[10] | d[11] << 8) + 2;
+    for (var zs = (flg >> 3 & 1) + (flg >> 4 & 1); zs > 0; zs -= !d[st++])
+      ;
+    return st + (flg & 2);
+  };
+  var gzl = function(d) {
+    var l = d.length;
+    return (d[l - 4] | d[l - 3] << 8 | d[l - 2] << 16 | d[l - 1] << 24) >>> 0;
+  };
+  var zlh = function(c, o) {
+    var lv = o.level, fl2 = lv == 0 ? 0 : lv < 6 ? 1 : lv == 9 ? 3 : 2;
+    c[0] = 120, c[1] = fl2 << 6 | (o.dictionary && 32);
+    c[1] |= 31 - (c[0] << 8 | c[1]) % 31;
+    if (o.dictionary) {
+      var h = adler();
+      h.p(o.dictionary);
+      wbytes(c, 2, h.d());
+    }
+  };
+  var zls = function(d, dict) {
+    if ((d[0] & 15) != 8 || d[0] >> 4 > 7 || (d[0] << 8 | d[1]) % 31)
+      err(6, "invalid zlib data");
+    if ((d[1] >> 5 & 1) == +!dict)
+      err(6, "invalid zlib data: " + (d[1] & 32 ? "need" : "unexpected") + " dictionary");
+    return (d[1] >> 3 & 4) + 2;
+  };
+  function inflateSync(data, opts) {
+    return inflt(data, { i: 2 }, opts && opts.out, opts && opts.dictionary);
+  }
+  function gunzipSync(data, opts) {
+    var st = gzs(data);
+    if (st + 8 > data.length)
+      err(6, "invalid gzip data");
+    return inflt(data.subarray(st, -8), { i: 2 }, opts && opts.out || new u8(gzl(data)), opts && opts.dictionary);
+  }
+  function zlibSync(data, opts) {
+    if (!opts)
+      opts = {};
+    var a = adler();
+    a.p(data);
+    var d = dopt(data, opts, opts.dictionary ? 6 : 2, 4);
+    return zlh(d, opts), wbytes(d, d.length - 4, a.d()), d;
+  }
+  function unzlibSync(data, opts) {
+    return inflt(data.subarray(zls(data, opts && opts.dictionary), -4), { i: 2 }, opts && opts.out, opts && opts.dictionary);
+  }
+  function decompressSync(data, opts) {
+    return data[0] == 31 && data[1] == 139 && data[2] == 8 ? gunzipSync(data, opts) : (data[0] & 15) != 8 || data[0] >> 4 > 7 || (data[0] << 8 | data[1]) % 31 ? inflateSync(data, opts) : unzlibSync(data, opts);
+  }
+  var td = typeof TextDecoder != "undefined" && /* @__PURE__ */ new TextDecoder();
+  var tds = 0;
+  try {
+    td.decode(et, { stream: true });
+    tds = 1;
+  } catch (e) {
+  }
+
+  // ../src/shims/zlib.ts
+  function unzip(input, cb) {
+    try {
+      cb(null, decompressSync(input));
+    } catch (e) {
+      cb(e, new Uint8Array());
+    }
+  }
+  function deflate(input, optsOrCb, maybeCb) {
+    const cb = typeof optsOrCb === "function" ? optsOrCb : maybeCb;
+    const level = typeof optsOrCb === "object" && (optsOrCb == null ? void 0 : optsOrCb.level) != null ? optsOrCb.level : 6;
+    try {
+      cb(null, zlibSync(input, { level }));
+    } catch (e) {
+      cb(e, new Uint8Array());
+    }
+  }
+  var zlib_default = { unzip, deflate };
+
+  // ../vendor/web_pen_sdk/Util/DotFilter.ts
+  var MAX_NOTE_ID = 16384;
+  var MAX_PAGE_ID = 262143;
+  var MAX_X = 15070;
+  var MAX_Y = 8480;
+  var DotFilter = class {
+    constructor(listener) {
+      this.useFilter = true;
+      this.delta = 10;
+      this.dot1 = new Dot_default();
+      this.dot2 = new Dot_default();
+      this.makeDownDot = new Dot_default();
+      this.makeMoveDot = new Dot_default();
+      this.secondCheck = true;
+      this.thirdCheck = true;
+      this.put = (dot) => {
+        this.filterProcess(dot);
+      };
+      /**
+       * Put dot
+       */
+      this.filterProcess = (dot) => {
+        let mdot = dot;
+        if (!this.validateCode(mdot)) {
+          return;
+        }
+        if (mdot.dotType == DotTypes.PEN_ERROR || mdot.dotType == DotTypes.PEN_INFO) {
+          this.sendDot(mdot);
+        } else if (mdot.dotType == DotTypes.PEN_DOWN) {
+          this.dot1 = mdot;
+          this.sendDot(mdot);
+        } else if (mdot.dotType == DotTypes.PEN_MOVE) {
+          if (this.secondCheck) {
+            this.dot2 = mdot;
+            this.secondCheck = false;
+          } else if (this.thirdCheck) {
+            if (this.validateStartDot(this.dot1, this.dot2, mdot)) {
+              this.sendDot(this.dot1);
+              if (this.validateMiddleDot(this.dot1, this.dot2, mdot)) {
+                this.sendDot(this.dot2);
+                this.dot1 = this.dot2;
+                this.dot2 = mdot;
+              } else {
+                this.dot2 = mdot;
+              }
+            } else {
+              this.dot1 = this.dot2;
+              this.dot2 = mdot;
+            }
+            this.thirdCheck = false;
+          } else {
+            if (this.validateMiddleDot(this.dot1, this.dot2, mdot)) {
+              this.sendDot(this.dot2);
+              this.dot1 = this.dot2;
+              this.dot2 = mdot;
+            } else {
+              this.dot2 = mdot;
+            }
+          }
+        } else if (mdot.dotType == DotTypes.PEN_UP) {
+          var validateStartDotFlag = true;
+          var validateMiddleDotFlag = true;
+          if (this.secondCheck) {
+            this.dot2 = this.dot1;
+          }
+          if (this.thirdCheck && this.dot1.dotType == DotTypes.PEN_DOWN) {
+            if (this.validateStartDot(this.dot1, this.dot2, mdot)) {
+              this.sendDot(this.dot1);
+            } else {
+              validateStartDotFlag = false;
+            }
+          }
+          if (this.validateMiddleDot(this.dot1, this.dot2, mdot)) {
+            if (!validateStartDotFlag) {
+              this.makeDownDot = mdot;
+              this.makeDownDot.dotType = DotTypes.PEN_DOWN;
+              this.sendDot(this.makeDownDot);
+            }
+            this.sendDot(this.dot2);
+          } else {
+            validateMiddleDotFlag = false;
+          }
+          if (this.validateEndDot(this.dot1, this.dot2, mdot)) {
+            if (!validateStartDotFlag && !validateMiddleDotFlag) {
+              this.makeDownDot = mdot;
+              this.makeDownDot.dotType = DotTypes.PEN_DOWN;
+              this.sendDot(this.makeDownDot);
+            }
+            if (this.thirdCheck && !validateMiddleDotFlag) {
+              this.makeMoveDot = mdot;
+              this.makeMoveDot.dotType = DotTypes.PEN_MOVE;
+              this.sendDot(this.makeMoveDot);
+            }
+            this.sendDot(mdot);
+          } else {
+            this.dot2.dotType = DotTypes.PEN_UP;
+            this.sendDot(this.dot2);
+          }
+          this.dot1 = new Dot_default();
+          this.dot2 = new Dot_default();
+          this.secondCheck = true;
+          this.thirdCheck = true;
+        }
+      };
+      this.validateCode = (d) => {
+        if (MAX_NOTE_ID < d.pageInfo.book || MAX_PAGE_ID < d.pageInfo.page) {
+          return false;
+        }
+        return true;
+      };
+      // ==============================================
+      // Use 3 points
+      // Directionality and Delta X, Delta Y
+      // ==============================================
+      this.validateStartDot = (vd1, vd2, vd3) => {
+        let d1 = vd1;
+        let d2 = vd2;
+        let d3 = vd3;
+        if (d1.x > MAX_X || d1.x < 1) {
+          return false;
+        }
+        if (d1.y > MAX_Y || d1.y < 1) {
+          return false;
+        }
+        let d123x = d3.x > d1.x == d2.x > d1.x;
+        let d13x = Math.abs(d3.x - d1.x);
+        let d12x = Math.abs(d1.x - d2.x);
+        if (d123x && d13x > this.delta && d12x > this.delta) {
+          return false;
+        }
+        let d123y = d3.y > d1.y == d2.y > d1.y;
+        let d13y = Math.abs(d3.y - d1.y);
+        let d12y = Math.abs(d1.y - d2.y);
+        if (d123y && d13y > this.delta && d12y > this.delta) {
+          return false;
+        }
+        return true;
+      };
+      this.validateMiddleDot = (vd1, vd2, vd3) => {
+        let d1 = vd1;
+        let d2 = vd2;
+        let d3 = vd3;
+        if (d2.x > MAX_X || d2.x < 1) {
+          return false;
+        }
+        if (d2.y > MAX_Y || d2.y < 1) {
+          return false;
+        }
+        let d123x = d3.x > d2.x == d1.x > d2.x;
+        let d23x = Math.abs(d3.x - d2.x);
+        let d12x = Math.abs(d1.x - d2.x);
+        if (d123x && d23x > this.delta && d12x > this.delta) {
+          return false;
+        }
+        let d123y = d1.y > d2.y == d3.y > d2.y;
+        let d13y = Math.abs(d3.y - d2.y);
+        let d12y = Math.abs(d1.y - d2.y);
+        if (d123y && d13y > this.delta && d12y > this.delta) {
+          return false;
+        }
+        return true;
+      };
+      this.validateEndDot = (vd1, vd2, vd3) => {
+        let d1 = vd1;
+        let d2 = vd2;
+        let d3 = vd3;
+        if (d3.x > MAX_X || d3.x < 1) {
+          return false;
+        }
+        if (d3.y > MAX_Y || d3.y < 1) {
+          return false;
+        }
+        if (d3.x > d1.x == d3.x > d2.x && Math.abs(d3.x - d1.x) > this.delta && Math.abs(d3.x - d2.x) > this.delta) {
+          return false;
+        } else if (d3.y > d1.y == d3.y > d2.y && Math.abs(d3.y - d1.y) > this.delta && Math.abs(d3.y - d2.y) > this.delta) {
+          return false;
+        }
+        return true;
+      };
+      this.sendDot = (dot) => {
+        if (this.listener) {
+          this.listener(dot);
+        }
+      };
+      this.listener = listener;
+    }
+  };
+
+  // ../vendor/web_pen_sdk/API/PUIStub.ts
+  function isPUI(_pageInfo) {
+    return false;
+  }
+  function isPUIOnPage(_pageInfo, _x, _y) {
+    return false;
+  }
+  var PUIController = class _PUIController {
+    static getInstance() {
+      return new _PUIController();
+    }
+    async getPuiCommand(_pageInfo, _x, _y) {
+      return null;
+    }
+  };
+
+  // ../vendor/web_pen_sdk/PenCotroller/PenClientParserV2.ts
+  var PenClientParserV2 = class {
+    constructor(penController) {
+      /**
+       * 실시간으로 필기 데이터 전송 시, 전달된 패킷에서 호버중인 Dot의 각종 값(좌표, 기울기)을 파싱하는 함수
+       * - 정상적으로 PenDown -> PenMove, PageInfo 를 수행했다면 moveDot를 Move Dot를 전달한다.
+       * - 패킷 파싱의 마지막 단계, 해당 함수를 호출하기 위해서는 ParsePacket 작업이 필요하다.
+       * @param {Packet} pk
+       */
+      this.PenHoverEvent = (pk) => {
+        const timeadd = pk.GetByte();
+        this.current.Time += timeadd;
+        this.current.TimeDiff = timeadd;
+        let x2 = pk.GetShort();
+        let y = pk.GetShort();
+        const fx = pk.GetByte();
+        const fy = pk.GetByte();
+        x2 += fx * 0.01;
+        y += fy * 0.01;
+        let dot = null;
+        if (this.penSettingInfo.HoverMode && !this.state.isStartWithDown) {
+          dot = Dot_default.MakeDot(
+            this.current,
+            x2,
+            y,
+            0,
+            Dot_default.DotTypes.PEN_HOVER,
+            this.state.mPenTipType,
+            this.state.mPenTipColor,
+            { tx: 0, ty: 0, twist: 0 }
+          );
+        }
+        if (dot != null) {
+          this.ProcessDot(dot);
+        }
+      };
+      /**
+       * 세팅된 도트가 그려지기 위해 펜 콘트롤러의 onDot로 전달하는 함수
+       * - 해당 함수가 기능하기 위해서는 onDot를 구현해야 한다.
+       * @param {Dot} dot
+       */
+      this.SendDotReceiveEvent = (dot) => {
+        if (this.penController.onDot) {
+          this.penController.onDot(this.penController, dot);
+          log("ParseDot ] X:", dot.x, " Y:", dot.y, " f:", dot.f, " DotType:", dot.dotType, " SOBP: ", dot.pageInfo);
+        } else {
+        }
+      };
+      this.dotFilter = new DotFilter(this.SendDotReceiveEvent);
+      this.penController = penController;
+      this.penVersionInfo = {};
+      this.penSettingInfo = {};
+      this.current = {
+        section: -1,
+        owner: -1,
+        note: -1,
+        page: -1,
+        Time: -1,
+        TimeDiff: 0
+      };
+      this.state = {
+        first: true,
+        mPenTipType: 0,
+        mPenTipColor: -1,
+        isStartWithDown: false,
+        mDotCount: -1,
+        reCheckPassword: false,
+        newPassword: null,
+        mPrevDot: null,
+        isBeforeMiddle: false,
+        isStartWithPaperInfo: false,
+        SessionTs: -1,
+        EventCount: -1,
+        isPUI: false,
+        cmdCheck: false
+      };
+      this.mBuffer = null;
+      this.IsEscape = false;
+      this.offline = {
+        mTotalOfflineStroke: -1,
+        mReceivedOfflineStroke: 0,
+        mTotalOfflineDataSize: -1
+      };
+      this.IsUploading = true;
+    }
+    // MARK: ParsePacket
+    /**
+     * 전달된 패킷의 커맨드 바이트를 확인 후, 각 커맨드로 패킷을 연결시키는 함수
+     * - 패킷 파싱의 두 번째 단계, 해당 함수를 호출하기 위해서는 ProtocolParse 작업이 필요하다.
+     * @param {Packet} packet
+     * @returns
+     */
+    ParsePacket(packet) {
+      let cmd = packet.Cmd;
+      log("ParsePacket", cmd, "0x" + cmd.toString(16));
+      log("ParsePacket", packet.Data);
+      if (packet.Result > 0) {
+        log("packet result failed", packet);
+        return;
+      }
+      switch (cmd) {
+        case CMD_default.VERSION_RESPONSE:
+          let versionInfo = VersionInfo(packet);
+          this.penVersionInfo = versionInfo;
+          this.penController.info = versionInfo;
+          this.IsUploading = false;
+          this.state.EventCount = 0;
+          log("ParsePacket Version Info", versionInfo);
+          this.penController.onMessage(this.penController, PenMessageType_default.PEN_CONNECTION_SUCCESS, null);
+          this.ReqPenStatus();
+          break;
+        case CMD_default.SHUTDOWN_EVENT:
+          let shutdownReason = packet.GetByte();
+          log("ParsePacket power off", shutdownReason);
+          this.penController.onMessage(this.penController, PenMessageType_default.EVENT_POWER_OFF, {
+            shutdownReason
+          });
+          break;
+        case CMD_default.LOW_BATTERY_EVENT:
+          let battery = packet.GetByte();
+          this.penController.onMessage(this.penController, PenMessageType_default.EVENT_LOW_BATTERY, {
+            Battery: battery
+          });
+          break;
+        // MARK: CMD Up & Down New
+        case CMD_default.ONLINE_NEW_PEN_DOWN_EVENT:
+          this.NewPenDown(packet);
+          break;
+        case CMD_default.ONLINE_NEW_PEN_UP_EVENT:
+          this.NewPenUp(packet);
+          break;
+        // MARK: CMD Up & Down Old
+        case CMD_default.ONLINE_PEN_UPDOWN_EVENT:
+          this.PenUpDown(packet);
+          break;
+        // MARK: CMD Dot
+        case CMD_default.ONLINE_PEN_DOT_EVENT:
+        case CMD_default.ONLINE_NEW_PEN_DOT_EVENT:
+          this.PenDotEvent(cmd, packet);
+          break;
+        case CMD_default.ONLINE_PEN_HOVER_EVENT:
+          this.PenHoverEvent(packet);
+          break;
+        case CMD_default.ONLINE_PAPER_INFO_EVENT:
+        case CMD_default.ONLINE_NEW_PAPER_INFO_EVENT:
+          this.PaperInfoEvent(cmd, packet);
+          break;
+        case CMD_default.ONLINE_PEN_ERROR_EVENT:
+        case CMD_default.ONLINE_NEW_PEN_ERROR_EVENT:
+          this.PenErrorDot(cmd, packet);
+          break;
+        case CMD_default.SETTING_INFO_RESPONSE:
+          let settingInfo = SettingInfo(packet);
+          this.penSettingInfo = settingInfo;
+          log("ParsePacket SETTING_INFO_RESPONSE", settingInfo, "first Connection?", this.state.first);
+          if (this.state.first) {
+            this.state.first = false;
+            this.penController.onMessage(this.penController, PenMessageType_default.PEN_SETTING_INFO, settingInfo);
+            if (settingInfo.Locked) {
+              this.penController.onMessage(this.penController, PenMessageType_default.PEN_PASSWORD_REQUEST, {
+                RetryCount: settingInfo.RetryCount,
+                ResetCount: settingInfo.ResetCount
+              });
+            } else {
+              this.penController.onMessage(this.penController, PenMessageType_default.PEN_AUTHORIZED, null);
+            }
+          } else {
+            this.penController.onMessage(this.penController, PenMessageType_default.PEN_SETTING_INFO, settingInfo);
+          }
+          break;
+        case CMD_default.SETTING_CHANGE_RESPONSE:
+          let settingChangeResult = SettingChange(packet);
+          if (settingChangeResult.result) {
+            this.penController.onMessage(this.penController, PenMessageType_default.PEN_SETUP_SUCCESS, settingChangeResult);
+          } else {
+            this.penController.onMessage(this.penController, PenMessageType_default.PEN_SETUP_FAILURE, settingChangeResult);
+          }
+          break;
+        // password
+        case CMD_default.PASSWORD_RESPONSE:
+          let password = Password(packet);
+          log("ParsePacket PASSWORD_RESPONSE", password);
+          if (password.status === 1) {
+            if (this.state.reCheckPassword) {
+              this.penController.onMessage(this.penController, PenMessageType_default.PASSWORD_SETUP_SUCCESS, {
+                UsingPassword: true
+              });
+              this.state.reCheckPassword = false;
+              break;
+            }
+            this.penController.onMessage(this.penController, PenMessageType_default.PEN_AUTHORIZED, null);
+          } else {
+            if (this.state.reCheckPassword) {
+              this.penController.onMessage(this.penController, PenMessageType_default.PASSWORD_SETUP_FAILURE, null);
+              this.state.reCheckPassword = false;
+            } else {
+              this.penController.onMessage(this.penController, PenMessageType_default.PEN_PASSWORD_REQUEST, password);
+            }
+          }
+          break;
+        case CMD_default.PASSWORD_CHANGE_RESPONSE:
+          let passwordChange = PasswordChange(packet);
+          if (passwordChange.status === 0) {
+            this.state.reCheckPassword = true;
+            this.penController.InputPassword(this.state.newPassword);
+            if (!this.state.newPassword) {
+              this.penController.onMessage(this.penController, PenMessageType_default.PASSWORD_SETUP_SUCCESS, {
+                UsingPassword: false
+              });
+            }
+          } else {
+            this.state.newPassword = "";
+            this.penController.onMessage(this.penController, PenMessageType_default.PASSWORD_SETUP_FAILURE, passwordChange);
+          }
+          break;
+        // MARK: CMD Offline
+        case CMD_default.OFFLINE_NOTE_LIST_RESPONSE:
+          {
+            let noteList = NoteList(packet);
+            this.penController.onMessage(this.penController, PenMessageType_default.OFFLINE_DATA_NOTE_LIST, noteList);
+          }
+          break;
+        case CMD_default.OFFLINE_PAGE_LIST_RESPONSE:
+          {
+            let pageList = PageList(packet);
+            this.penController.onMessage(this.penController, PenMessageType_default.OFFLINE_DATA_PAGE_LIST, pageList);
+          }
+          break;
+        case CMD_default.OFFLINE_DATA_RESPONSE:
+          {
+            this.offline.mTotalOfflineStroke = packet.GetInt();
+            this.offline.mReceivedOfflineStroke = 0;
+            this.offline.mTotalOfflineDataSize = packet.GetInt();
+            let offlineInfo = {
+              isCompressed: packet.GetByte() === 1,
+              stroke: this.offline.mTotalOfflineStroke,
+              bytes: this.offline.mTotalOfflineDataSize
+            };
+            log("OFFLINE_DATA_RESPONSE ", offlineInfo);
+            if (this.offline.mTotalOfflineDataSize > 0) {
+              this.penController.onMessage(this.penController, PenMessageType_default.OFFLINE_DATA_SEND_START, offlineInfo);
+            } else {
+              this.penController.onMessage(this.penController, PenMessageType_default.OFFLINE_DATA_SEND_FAILURE, null);
+            }
+            if (packet.Result !== 0) {
+              this.penController.onMessage(this.penController, PenMessageType_default.OFFLINE_DATA_SEND_FAILURE, null);
+            }
+          }
+          break;
+        case CMD_default.OFFLINE_PACKET_REQUEST:
+          this.ResOfflineData(packet);
+          break;
+        case CMD_default.OFFLINE_DATA_DELETE_RESPONSE:
+          this.penController.onMessage(this.penController, PenMessageType_default.OFFLINE_DATA_DELETE_RESPONSE, {
+            Result: packet.Result === 0
+          });
+          break;
+        // MARK: CMD Firmware Response
+        case CMD_default.FIRMWARE_UPLOAD_RESPONSE:
+          const status2 = packet.GetByte();
+          if (packet.Result !== 0 || status2 !== 0) {
+            this.IsUploading = false;
+            this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_FAILURE, status2);
+          } else if (status2 === 0) {
+            this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_STATUS, 0);
+          }
+          break;
+        case CMD_default.FIRMWARE_PACKET_REQUEST:
+          {
+            let firmwareRes = {
+              status: packet.GetByte(),
+              offset: packet.GetInt()
+            };
+            this.ResponseChunkRequest(firmwareRes.offset, firmwareRes.status);
+          }
+          break;
+        case CMD_default.ONLINE_DATA_RESPONSE:
+          log("Using Note Set", packet.Result);
+          this.penController.onMessage(this.penController, PenMessageType_default.PEN_USING_NOTE_SET_RESULT, {
+            Result: packet.Result === 0
+          });
+          break;
+        case CMD_default.RES_PDS:
+          let pds = PDS(packet);
+          this.penController.onMessage(this.penController, PenMessageType_default.RES_PDS, pds);
+          break;
+        case CMD_default.PEN_PROFILE_RESPONSE:
+          const profile = ProfileData(packet);
+          this.penController.onMessage(this.penController, PenMessageType_default.PEN_PROFILE, profile);
+          break;
+        default:
+          log("ParsePacket: not implemented yet", packet);
+          break;
+      }
+    }
+    /**
+     * 패킷을 반환받을 때 해당 패킷이 순차적으로 바르게 들어온 것인지 확인하는 함수
+     * @param {number} ecount
+     */
+    CheckEventCount(ecount) {
+      if (ecount - this.state.EventCount !== 1 && (ecount !== 0 || this.state.EventCount !== 255)) {
+        let errorDot = null;
+        if (this.state.mPrevDot != null) {
+          errorDot = this.state.mPrevDot.Clone();
+          errorDot.dotType = Dot_default.DotTypes.PEN_ERROR;
+        }
+        if (ecount - this.state.EventCount > 1) {
+          let extraData = "missed event count " + (this.state.EventCount + 1) + "-" + (ecount - 1);
+          this.penController.onErrorDetected({
+            ErrorType: ErrorType.InvalidEventCount,
+            Dot: errorDot,
+            TimeStamp: this.state.SessionTs,
+            ExtraData: extraData
+          });
+        } else if (ecount < this.state.EventCount) {
+          let extraData = "invalid event count " + this.state.EventCount + "," + ecount;
+          this.penController.onErrorDetected({
+            ErrorType: ErrorType.InvalidEventCount,
+            Dot: errorDot,
+            TimeStamp: this.state.SessionTs,
+            ExtraData: extraData
+          });
+        }
+      }
+      this.state.EventCount = ecount;
+    }
+    // MARK: Parse (Up & Down)
+    /**
+     * 실시간으로 펜 DOWN 시, 전달된 패킷에서 시각, 펜의 타입, 펜의 색상을 파싱하고, 펜 이벤트의 설정 값들을 초기화하는 함수
+     * - 패킷 파싱의 마지막 단계, 해당 함수를 호출하기 위해서는 ParsePacket 작업이 필요하다.
+     * @param {Packet} pk
+     */
+    NewPenDown(pk) {
+      if (this.state.isStartWithDown && this.state.isBeforeMiddle && this.state.mPrevDot !== null) {
+        this.MakeUpDot();
+      }
+      let ecount = pk.GetByte();
+      this.CheckEventCount(ecount);
+      this.state.isStartWithDown = true;
+      this.current.Time = pk.GetLong();
+      this.state.SessionTs = this.current.Time;
+      this.state.isBeforeMiddle = false;
+      this.state.isStartWithPaperInfo = false;
+      this.state.isPUI = false;
+      this.state.mDotCount = 0;
+      this.state.mPenTipType = pk.GetByte() === 0 ? PenTipType.Normal : PenTipType.Eraser;
+      this.state.mPenTipColor = pk.GetInt();
+      this.state.mPrevDot = null;
+      const x2 = -1;
+      const y = -1;
+      const f = 0;
+      const Ddot = Dot_default.MakeDot(
+        this.current,
+        x2,
+        y,
+        f,
+        Dot_default.DotTypes.PEN_DOWN,
+        this.state.mPenTipType,
+        this.state.mPenTipColor,
+        { tx: 0, ty: 0, twist: 0 }
+      );
+      this.ProcessDot(Ddot);
+    }
+    /**
+     * 실시간으로 펜 UP 시, 전달된 패킷에서 시각, 전송 및 처리 된 도트, 이미지 개수를 파싱하고, 펜 이벤트의 설정 값들을 초기화하는 함수
+     * - 정상적으로 PenDown -> PenMove -> PenUp 의 동작을 수행했다면 Up Dot를 전달한다.
+     * - 패킷 파싱의 마지막 단계, 해당 함수를 호출하기 위해서는 ParsePacket 작업이 필요하다.
+     * @param {Packet} pk
+     */
+    NewPenUp(pk) {
+      let ecount = pk.GetByte();
+      this.CheckEventCount(ecount);
+      let timeStamp = pk.GetLong();
+      new Date(timeStamp);
+      let dotCount = pk.GetShort();
+      let totalImageCount = pk.GetShort();
+      let procImageCount = pk.GetShort();
+      let succImageCount = pk.GetShort();
+      let sendImageCount = pk.GetShort();
+      if (this.state.isStartWithDown && this.state.isBeforeMiddle && this.state.mPrevDot !== null) {
+        let udot = this.state.mPrevDot.Clone();
+        udot.dotType = Dot_default.DotTypes.PEN_UP;
+        let imageInfo = null;
+        if (this.state.isStartWithPaperInfo) {
+          imageInfo = {
+            DotCount: dotCount,
+            Total: totalImageCount,
+            Processed: procImageCount,
+            Success: succImageCount,
+            Transferred: sendImageCount
+          };
+        }
+        this.ProcessDot(udot);
+      } else if (!this.state.isStartWithDown && !this.state.isBeforeMiddle) {
+        this.penController.onErrorDetected({
+          ErrorType: ErrorType.MissingPenDownPenMove,
+          TimeStamp: -1
+        });
+      } else if (!this.state.isBeforeMiddle) {
+        this.penController.onErrorDetected({
+          ErrorType: ErrorType.MissingPenMove,
+          TimeStamp: this.state.SessionTs
+        });
+      }
+      this.current.Time = -1;
+      this.current.TimeDiff = 0;
+      this.state.SessionTs = -1;
+      this.state.isStartWithDown = false;
+      this.state.isBeforeMiddle = false;
+      this.state.isStartWithPaperInfo = false;
+      this.state.isPUI = false;
+      this.state.mDotCount = 0;
+      this.state.mPrevDot = null;
+    }
+    /**
+     * 실시간으로 펜 Up, Down 시, 전달된 패킷에서 시각, 펜의 타입, 펜의 색상을 파싱하고, 펜 이벤트의 설정 값들을 초기화하는 함수
+     * - 펜 펌웨어 버전이 2.13 이전일 때 사용
+     * - 패킷 파싱의 마지막 단계, 해당 함수를 호출하기 위해서는 ParsePacket 작업이 필요하다.
+     * @param {Packet} pk
+     */
+    PenUpDown(pk) {
+      let IsDown = pk.GetByte() === 0;
+      if (IsDown) {
+        if (this.state.isStartWithDown && this.state.isBeforeMiddle && this.state.mPrevDot !== null) {
+          this.MakeUpDot();
+        }
+        this.state.isStartWithDown = true;
+        this.current.Time = pk.GetLong();
+        this.state.SessionTs = this.current.Time;
+      } else {
+        if (this.state.isStartWithDown && this.state.isBeforeMiddle && this.state.mPrevDot !== null) {
+          this.MakeUpDot(false);
+        } else if (!this.state.isStartWithDown && !this.state.isBeforeMiddle) {
+          this.penController.onErrorDetected({
+            ErrorType: ErrorType.MissingPenDownPenMove,
+            TimeStamp: -1
+          });
+        } else if (!this.state.isBeforeMiddle) {
+          this.penController.onErrorDetected({
+            ErrorType: ErrorType.MissingPenMove,
+            TimeStamp: this.state.SessionTs
+          });
+        }
+        this.state.isStartWithDown = false;
+        this.current.Time = -1;
+        this.current.TimeDiff = 0;
+        this.state.SessionTs = -1;
+      }
+      this.state.isBeforeMiddle = false;
+      this.state.isStartWithPaperInfo = false;
+      this.state.mDotCount = 0;
+      this.state.mPenTipType = pk.GetByte() === 0 ? PenTipType.Normal : PenTipType.Eraser;
+      this.state.mPenTipColor = pk.GetInt();
+      this.state.mPrevDot = null;
+    }
+    /**
+     * 실시간으로 필기 데이터 전송에 실패했을 경우, 전달된 패킷에서 에러 환경에 대한 정보 값을 파싱하는 함수
+     * - 패킷 파싱의 마지막 단계, 해당 함수를 호출하기 위해서는 ParsePacket 작업이 필요하다.
+     * @param {number} cmd - packetCount 추가된 패킷인지 확인하기 위한 커맨드
+     * @param {Packet} pk
+     */
+    PenErrorDot(cmd, pk) {
+      if (cmd === CMD_default.ONLINE_NEW_PEN_ERROR_EVENT) {
+        let ecount = pk.GetByte();
+        this.CheckEventCount(ecount);
+      }
+      let timeadd = pk.GetByte();
+      this.current.Time += timeadd;
+      this.current.TimeDiff = timeadd;
+      let force = pk.GetShort();
+      let brightness = pk.GetByte();
+      let exposureTime = pk.GetByte();
+      let ndacProcessTime = pk.GetByte();
+      let labelCount = pk.GetShort();
+      let ndacErrorCode = pk.GetByte();
+      let classType = pk.GetByte();
+      let errorCount = pk.GetByte();
+      let newInfo = {
+        TimeStamp: this.current.Time,
+        force,
+        brightness,
+        exposureTime,
+        ndacProcessTime,
+        labelCount,
+        ndacErrorCode,
+        classType,
+        errorCount
+      };
+      let errorDot = null;
+      if (this.state.mPrevDot != null) {
+        errorDot = this.state.mPrevDot.Clone();
+        errorDot.dotType = Dot_default.DotTypes.PEN_UP;
+      }
+      this.penController.onErrorDetected({
+        ErrorType: ErrorType.ImageProcessingError,
+        Dot: errorDot,
+        TimeStamp: this.state.SessionTs,
+        ImageProcessErrorInfo: newInfo
+      });
+    }
+    // MARK: Parse Paper
+    /**
+     * 실시간으로 필기 데이터 전송 시, 전달된 패킷에서 입력된 종이의 정보(section, owner, note, page)를 파싱하는 함수
+     * - 패킷 파싱의 마지막 단계, 해당 함수를 호출하기 위해서는 ParsePacket 작업이 필요하다.
+     * @param {number} cmd - packetCount 추가된 패킷인지 확인하기 위한 커맨드
+     * @param {Packet} pk
+     */
+    PaperInfoEvent(cmd, pk) {
+      if (cmd === CMD_default.ONLINE_NEW_PAPER_INFO_EVENT) {
+        let ecount = pk.GetByte();
+        this.CheckEventCount(ecount);
+      }
+      if (this.state.isStartWithDown && this.state.isBeforeMiddle && this.state.mPrevDot !== null) {
+        this.MakeUpDot(false);
+      }
+      let rb = pk.GetBytes(4);
+      const section = rb[3] & 255;
+      const owner = byteArrayToInt(new Uint8Array([rb[0], rb[1], rb[2], 0]));
+      const book = pk.GetInt();
+      const page = pk.GetInt();
+      this.current.section = section;
+      this.current.owner = owner;
+      this.current.note = book;
+      this.current.page = page;
+      this.state.mDotCount = 0;
+      this.state.isStartWithPaperInfo = true;
+      if (isPUI({ section, owner, book, page })) {
+        this.state.isPUI = true;
+        this.state.cmdCheck = true;
+      }
+      const x2 = -1;
+      const y = -1;
+      const f = 0;
+      const Ddot = Dot_default.MakeDot(
+        this.current,
+        x2,
+        y,
+        f,
+        Dot_default.DotTypes.PEN_INFO,
+        this.state.mPenTipType,
+        this.state.mPenTipColor,
+        { tx: 0, ty: 0, twist: 0 }
+      );
+      this.ProcessDot(Ddot);
+    }
+    // MARK: Parse Dot
+    /**
+     * 실시간으로 필기 데이터 전송 시, 전달된 패킷에서 입력된 Dot의 각종 값(좌표, 기울기, 필압 등)을 파싱하는 함수
+     * - 정상적으로 PenDown -> PenMove, PageInfo 를 수행했다면 moveDot를 Move Dot를 전달한다.
+     * - 패킷 파싱의 마지막 단계, 해당 함수를 호출하기 위해서는 ParsePacket 작업이 필요하다.
+     * @param {number} cmd - packetCount 추가된 패킷인지 확인하기 위한 커맨드
+     * @param {Packet} pk
+     */
+    PenDotEvent(cmd, pk) {
+      if (cmd === CMD_default.ONLINE_NEW_PEN_DOT_EVENT) {
+        let ecount = pk.GetByte();
+        this.CheckEventCount(ecount);
+      }
+      let timeadd = pk.GetByte();
+      this.current.Time += timeadd;
+      this.current.TimeDiff = timeadd;
+      let force = pk.GetShort();
+      let x2 = pk.GetShort();
+      let y = pk.GetShort();
+      let fx = pk.GetByte();
+      let fy = pk.GetByte();
+      x2 += fx * 0.01;
+      y += fy * 0.01;
+      let tx = pk.GetByte();
+      let ty = pk.GetByte();
+      let twist = pk.GetShort();
+      let angel = {
+        tx,
+        ty,
+        twist
+      };
+      let dot = null;
+      if (this.state.mDotCount === 0 && this.current && isPUIOnPage(this.current, x2, y)) {
+        this.state.isPUI = true;
+        this.state.cmdCheck = true;
+      }
+      if (this.state.isPUI) {
+        if (this.state.mDotCount === 0 && this.state.cmdCheck) {
+          const pui = PUIController.getInstance();
+          const command = pui.getPuiCommand(this.current, x2, y).then((cmd2) => {
+            if (cmd2) {
+              this.penController.onMessage(this.penController, PenMessageType_default.EVENT_DOT_PUI, { command: cmd2 });
+            }
+          });
+          this.state.cmdCheck = false;
+          return;
+        }
+      }
+      if (!this.penSettingInfo.HoverMode && !this.state.isStartWithDown) {
+        if (!this.state.isStartWithPaperInfo) {
+          this.penController.onErrorDetected({
+            ErrorType: ErrorType.MissingPenDown,
+            TimeStamp: -1
+          });
+        } else {
+          this.current.Time = Date.now();
+          this.state.SessionTs = this.current.Time;
+          let errorDot = Dot_default.MakeDot(
+            this.current,
+            x2,
+            y,
+            force,
+            Dot_default.DotTypes.PEN_ERROR,
+            this.state.mPenTipType,
+            this.state.mPenTipColor,
+            angel
+          );
+          this.penController.onErrorDetected({
+            ErrorType: ErrorType.MissingPenDown,
+            Dot: errorDot,
+            TimeStamp: this.state.SessionTs
+          });
+          this.state.isStartWithDown = true;
+          this.state.isStartWithPaperInfo = true;
+        }
+      }
+      if (this.penSettingInfo.HoverMode && !this.state.isStartWithDown) {
+        dot = Dot_default.MakeDot(
+          this.current,
+          x2,
+          y,
+          force,
+          Dot_default.DotTypes.PEN_HOVER,
+          this.state.mPenTipType,
+          this.state.mPenTipColor,
+          angel
+        );
+      } else if (this.state.isStartWithDown) {
+        if (this.current.Time < 1e4) {
+          this.UpDotTimerCallback();
+          this.penController.onErrorDetected({
+            ErrorType: ErrorType.InvalidTime,
+            TimeStamp: this.state.SessionTs
+          });
+        }
+        if (this.state.isStartWithPaperInfo) {
+          dot = Dot_default.MakeDot(
+            this.current,
+            x2,
+            y,
+            force,
+            // this.state.mDotCount === 0 ? Dot.DotTypes.PEN_DOWN : Dot.DotTypes.PEN_MOVE,
+            Dot_default.DotTypes.PEN_MOVE,
+            this.state.mPenTipType,
+            this.state.mPenTipColor,
+            angel
+          );
+        } else {
+          this.penController.onErrorDetected({
+            ErrorType: ErrorType.MissingPageChange,
+            TimeStamp: this.state.SessionTs
+          });
+        }
+      }
+      if (dot != null) {
+        this.ProcessDot(dot);
+      }
+      this.state.isBeforeMiddle = true;
+      this.state.mPrevDot = dot;
+      this.state.mDotCount++;
+    }
+    /**
+     * 펜의 블루투스 연결이 끊어졌을 경우, 펜 이벤트의 설정 값들을 초기화하는 함수
+     */
+    OnDisconnected() {
+      if (this.state.isStartWithDown && this.state.isBeforeMiddle && this.state.mPrevDot !== null) {
+        this.MakeUpDot();
+        this.current.Time = -1;
+        this.current.TimeDiff = 0;
+        this.state.SessionTs = -1;
+        this.state.isStartWithDown = false;
+        this.state.isBeforeMiddle = false;
+        this.state.isStartWithPaperInfo = false;
+        this.state.mDotCount = 0;
+        this.state.mPrevDot = null;
+      }
+    }
+    /**
+     * 펜 다운 후 도트 들어올 때 정상적인 시간 값이 아닐 경우, 펜 이벤트 설정 값들을 초기화하는 함수
+     */
+    UpDotTimerCallback() {
+      if (this.state.isStartWithDown && this.state.isBeforeMiddle && this.state.mPrevDot !== null) {
+        this.MakeUpDot();
+        this.current.Time = -1;
+        this.current.TimeDiff = 0;
+        this.state.SessionTs = -1;
+        this.state.isStartWithDown = false;
+        this.state.isBeforeMiddle = false;
+        this.state.isStartWithPaperInfo = false;
+        this.state.mDotCount = 0;
+        this.state.mPrevDot = null;
+      }
+    }
+    /**
+     * 펜업 이벤트를 강제로 발생시키기 위한 함수, 또한 참일 경우 에러 메시지 송출
+     * @param {boolean} isError
+     */
+    MakeUpDot(isError = true) {
+      if (isError) {
+        let errorDot = this.state.mPrevDot.Clone();
+        errorDot.dotType = Dot_default.DotTypes.PEN_ERROR;
+        this.penController.onErrorDetected({
+          ErrorType: ErrorType.MissingPenUp,
+          Dot: errorDot,
+          TimeStamp: this.state.SessionTs
+        });
+      }
+      let audot = this.state.mPrevDot.Clone();
+      audot.dotType = Dot_default.DotTypes.PEN_UP;
+      this.ProcessDot(audot);
+    }
+    // MARK: Parse Offline
+    /**
+     * 오프라인 필기 데이터 전송 시, 전달된 패킷에서 압축여부, 전송 위치, 종이 정보, 필기 데이터 등 오프라인 데이터를 파싱하는 함수
+     * - 패킷 파싱의 마지막 단계, 해당 함수를 호출하기 위해서는 ParsePacket 작업이 필요하다.
+     * @param {Packet} packet
+     */
+    ResOfflineData(packet) {
+      const packetid = packet.GetShort();
+      const isCompressed = packet.GetByte() === 1 ? true : false;
+      const beforsize = packet.GetShort();
+      const aftersize = packet.GetShort();
+      const transPosition = packet.GetByte();
+      const rb = packet.GetBytes(4);
+      const [section, owner] = GetSectionOwner(rb);
+      const note = packet.GetInt();
+      const strokeCount = packet.GetShort();
+      const oDataSize = isCompressed ? aftersize : beforsize;
+      const data = packet.GetBytes(oDataSize);
+      const Paper = {
+        packetid,
+        isCompressed,
+        beforsize,
+        aftersize,
+        transPosition,
+        section,
+        owner,
+        note,
+        strokeCount,
+        dataSize: data.length
+      };
+      if (this.penController.abortOfflineTransfer) {
+        if (transPosition !== 2) this.ReqOfflineData2(packetid, true, true);
+        this.penController.onMessage(this.penController, PenMessageType_default.OFFLINE_DATA_SEND_STATUS, 100);
+        return;
+      }
+      if (isCompressed) {
+        let u82 = new Uint8Array(data);
+        zlib_default.unzip(u82, (err2, res) => {
+          if (!err2) {
+            let unzipU8 = new Uint8Array(res);
+            this.ParseSDK2OfflinePenData(unzipU8, Paper);
+          } else {
+            log("unzip error", err2);
+          }
+        });
+      } else {
+        let u82 = new Uint8Array(data);
+        this.ParseSDK2OfflinePenData(u82, Paper);
+      }
+      if (transPosition === 2) {
+        this.penController.onMessage(this.penController, PenMessageType_default.OFFLINE_DATA_SEND_STATUS, 100);
+      } else {
+        this.offline.mReceivedOfflineStroke += strokeCount;
+        this.ReqOfflineData2(packetid, true, false);
+        let percent = this.offline.mReceivedOfflineStroke * 100 / this.offline.mTotalOfflineStroke;
+        this.penController.onMessage(this.penController, PenMessageType_default.OFFLINE_DATA_SEND_STATUS, percent);
+      }
+    }
+    /**
+     * 오프라인 필기 데이터 전송 시, 오프라인 데이터 내의 stroke 데이터 (PenUpDown 시각, 펜 타입,
+     * 펜 색상, 도트 수) 및 dot 데이터 (좌표, 기울기, 필압 등)를 파싱하고 stroke 배열에 dot를 추가하는 함수
+     * - Paper ⊃ Stroke ⊃ Dot
+     * - 해당 함수를 호출하기 위해서는 ResOfflineData 작업이 필요하다.
+     * @param {array} u8
+     * @param {any} paper - 오프라인 데이터로 구성된 페이퍼
+     */
+    ParseSDK2OfflinePenData(u82, paper) {
+      let strokes = [];
+      let packet = new PacketBuilder().data(u82).Build();
+      let strokeCount = paper.strokeCount;
+      for (let i2 = 0; i2 < strokeCount; i2++) {
+        let page = packet.GetInt();
+        let downTime = packet.GetLong();
+        packet.GetLong();
+        let penTipType = packet.GetByte();
+        let penTipColor = packet.GetInt();
+        let dotCount = packet.GetShort();
+        paper.page = page;
+        paper.Time = downTime;
+        let Dots = [];
+        for (let j = 0; j < dotCount; j++) {
+          let nTimeDelta = packet.GetByte();
+          let force = packet.GetShort();
+          let x2 = packet.GetShort();
+          let y = packet.GetShort();
+          let fx = packet.GetByte();
+          let fy = packet.GetByte();
+          x2 += fx * 0.01;
+          y += fy * 0.01;
+          let xtilt = packet.GetByte();
+          let ytilt = packet.GetByte();
+          let twist = packet.GetShort();
+          packet.GetShort();
+          packet.GetByte();
+          let angel = {
+            tx: xtilt,
+            ty: ytilt,
+            twist
+          };
+          paper.Time += nTimeDelta;
+          let dottype = Dot_default.DotTypes.PEN_MOVE;
+          if (j === 0) dottype = Dot_default.DotTypes.PEN_DOWN;
+          if (j === dotCount - 1) dottype = Dot_default.DotTypes.PEN_UP;
+          let dot = Dot_default.MakeDot(paper, x2, y, force, dottype, penTipType, penTipColor, angel);
+          Dots.push(dot);
+        }
+        let stroke = { Dots };
+        strokes.push(stroke);
+      }
+      this.penController.onMessage(this.penController, PenMessageType_default.OFFLINE_DATA_SEND_SUCCESS, strokes);
+    }
+    // NOTE: Request(Offline Receive Response)
+    /**
+     * 오프라인 필기 데이터를 전송받았을 때, 전송 여부 등을 펜으로 반환하는 함수
+     * - 해당 함수를 호출하기 위해서는 ResOfflineData 작업이 필요하다.
+     * @param {number} index
+     * @param {boolean} isSuccess
+     * @param {boolean} end - true일 경우 전송 중단, false일 경우 계속 전송
+     */
+    ReqOfflineData2(index, isSuccess = true, end = false) {
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.OFFLINE_PACKET_RESPONSE).Put(isSuccess ? 0 : 1).PutShort(3).PutShort(index).Put(end ? 0 : 1).Put(Const_default.PK_ETX, false);
+      this.Send(bf);
+    }
+    // NOTE: Request(PenStatus)
+    /**
+     * 각종 펜 설정에 대한 정보를 요청하는 함수
+     * @returns
+     */
+    ReqPenStatus() {
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.SETTING_INFO_REQUEST).PutShort(0).Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    // NOTE: Request(SetupTime)
+    /**
+     * 펜 설정 중 시각에 대해 현재 시각으로 변경을 요청하는 함수
+     * @returns
+     */
+    ReqSetupTime() {
+      let timetick = Date.now();
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.SETTING_CHANGE_REQUEST).PutShort(9).Put(SettingType.TimeStamp).PutLong(timetick).Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    // MARK: Parse Start(Step 1)
+    /**
+     * Step3 Send Data from Pen
+     * 패킷이 들어올 때, 버퍼 공간을 만들고 escape 처리를 하며 버퍼에 패킷을 전달하는 함수
+     * - 패킷 파싱의 첫 번째 단계
+     * @param {array} buff - uint8array
+     */
+    ProtocolParse(buff) {
+      log("Parssing Process Start", buff);
+      let size = buff.length;
+      for (let i2 = 0; i2 < size; i2++) {
+        if (buff[i2] === Const_default.PK_STX) {
+          this.mBuffer = new ByteUtil();
+          this.IsEscape = false;
+        } else if (buff[i2] === Const_default.PK_ETX) {
+          let builder = new PacketBuilder();
+          let cmd = this.mBuffer.GetByte();
+          let result_size = cmd >> 4 !== 6 && cmd !== 115 && cmd !== 36 && cmd !== 50 ? 1 : 0;
+          let result = result_size > 0 ? this.mBuffer.GetByte() : -1;
+          let length = this.mBuffer.GetShort();
+          let data = this.mBuffer.GetBytes();
+          builder.cmd(cmd).result(result).data(data).length(length);
+          this.mBuffer.Clear();
+          this.mBuffer = null;
+          const packet = builder.Build();
+          this.ParsePacket(packet);
+          this.IsEscape = false;
+        } else if (buff[i2] === Const_default.PK_DLE && !this.IsEscape) {
+          this.IsEscape = true;
+        } else if (this.IsEscape) {
+          this.mBuffer.Put(buff[i2] ^ 32, false);
+          this.IsEscape = false;
+        } else {
+          this.mBuffer.Put(buff[i2], false);
+        }
+      }
+    }
+    /**
+     * 펌웨어 업데이트를 위해 펜에서 전달된 상태와 위치값으로 펌웨어 데이터를 처리하여 Request로 전달하는 함수
+     * @param {number} offset
+     * @param {number} status - status: 0 = 시작 / 1 = 중간 / 2 = 끝 / 3 = Error
+     */
+    ResponseChunkRequest(offset, status2) {
+      const fwBf = this.penController.mClientV2.state.fwFile;
+      const packetSize = this.penController.mClientV2.state.fwPacketSize;
+      const data = fwBf.GetBytesWithOffset(offset, packetSize);
+      if (status2 === FirmwareStatusType.STATUS_START || status2 === FirmwareStatusType.STATUS_CONTINUE || status2 === FirmwareStatusType.STATUS_END) {
+        this.IsUploading = true;
+        log("[FW] received pen upgrade status : " + status2);
+      } else if (status2 === FirmwareStatusType.STATUS_ERROR) {
+        this.IsUploading = false;
+        this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_FAILURE, null);
+        log("[FW] received pen upgrade status : FW Error !!");
+        this.penController.RequestFirmwareUpload(offset, data, status2);
+        return;
+      } else {
+        this.IsUploading = false;
+        this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_FAILURE, null);
+        log("[FW] received pen upgrade status : Unknown");
+        return;
+      }
+      if (status2 === FirmwareStatusType.STATUS_END) {
+        if (data !== null) {
+          this.penController.RequestFirmwareUpload(offset, data, status2);
+        }
+        this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_STATUS, 100);
+        this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_SUCCESS, null);
+        this.IsUploading = false;
+        return;
+      } else {
+        this.penController.RequestFirmwareUpload(offset, data, status2);
+      }
+      let maximum = fwBf.Size;
+      if (maximum % packetSize == 0) {
+        maximum = maximum / packetSize;
+      } else {
+        maximum = maximum / packetSize + 1;
+      }
+      const index = offset / packetSize;
+      log("[FW] send progress => Maximum : " + maximum + ", Current : " + index);
+      const percent = index * 100 / maximum;
+      this.penController.onMessage(this.penController, PenMessageType_default.PEN_FW_UPGRADE_STATUS, percent);
+    }
+    /**
+     * 패킷 내 실데이터 값으로 패킷의 시작, 끝 값인 STX, ETX가 포함되어 있을 때 escape 처리를 위한 함수
+     * @param {number} input
+     * @returns {array}
+     */
+    Escape(input) {
+      if (input === Const_default.PK_STX || input === Const_default.PK_ETX || input === Const_default.PK_DLE) {
+        return [Const_default.PK_DLE, input ^ 32];
+      } else {
+        return [input];
+      }
+    }
+    // Send Dot
+    ProcessDot(dot) {
+      if (dot.dotType === Dot_default.DotTypes.PEN_HOVER) {
+        this.SendDotReceiveEvent(dot);
+      } else {
+        this.dotFilter.put(dot);
+      }
+    }
+    // Send to Pen
+    /**
+     * 만들어진 버퍼(펜에 요청을 위한 버퍼)를 펜 콘트롤러의 handleWrite로 전달하는 함수
+     * - 해당 함수가 기능하기 위해서는 handleWrite를 구현해야 한다.
+     * @param {ByteUtil} bf
+     * @returns
+     */
+    Send(bf) {
+      const u82 = bf.ToU8Array();
+      this.penController.handleWrite(u82);
+      return true;
+    }
+  };
+
+  // ../vendor/web_pen_sdk/Model/SDKError.ts
+  var SDKError = class {
+    constructor(msg) {
+      this.message = msg;
+      this.name = "SDKError";
+    }
+    toString() {
+      return this.name + ": " + this.message;
+    }
+  };
+
+  // ../vendor/web_pen_sdk/PenCotroller/PenRequestV2.ts
+  var PenRequestV2 = class {
+    constructor(penController) {
+      /**
+       * 펜에 프로파일 생성을 요청하기 위한 버퍼를 만들고 전송하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @param {string} password
+       * @returns
+       */
+      this.ReqProfileCreate = (name, password) => {
+        const bf = new ByteUtil();
+        const profileName = toUTF8Array(name);
+        const profilePassword = toUTF8Array(password);
+        const neoStudioProfileName = "neonote2";
+        const neoStudioProfilePassword = [211, 105, 222, 205, 182, 10, 150, 31];
+        const neoNoteProfileName = "neolab";
+        const neoNoteProfilePassword = [107, 202, 107, 80, 93, 236, 167, 140];
+        const nameNeo = toUTF8Array(neoNoteProfileName);
+        const passwordNeo = new Uint8Array(neoNoteProfilePassword);
+        bf.Put(Const_default.PK_STX, false).Put(CMD_default.PEN_PROFILE_REQUEST);
+        bf.PutShort(21).PutArray(nameNeo, 8).Put(ProfileType.CreateProfile).PutArray(passwordNeo, 8).PutShort(Math.pow(2, 5)).PutShort(Math.pow(2, 7));
+        bf.Put(Const_default.PK_ETX, false);
+        return this.Send(bf);
+      };
+      /**
+       * 펜에 설정된 프로파일 제거를 요청하기 위한 버퍼를 만들고 전송하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @param {string} password
+       * @returns
+       */
+      this.ReqProfileDelete = (name, password) => {
+        const bf = new ByteUtil();
+        const profileName = toUTF8Array(name);
+        const profilePassword = toUTF8Array(password);
+        const neoStudioProfileName = "neonote2";
+        const neoStudioProfilePassword = [211, 105, 222, 205, 182, 10, 150, 31];
+        const neoNoteProfileName = "neolab";
+        const neoNoteProfilePassword = [107, 202, 107, 80, 93, 236, 167, 140];
+        const nameNeo = toUTF8Array(neoNoteProfileName);
+        const passwordNeo = new Uint8Array(neoNoteProfilePassword);
+        bf.Put(Const_default.PK_STX, false).Put(CMD_default.PEN_PROFILE_REQUEST);
+        bf.PutShort(17).PutArray(nameNeo, 8).Put(ProfileType.DeleteProfile).PutArray(passwordNeo, 8);
+        bf.Put(Const_default.PK_ETX, false);
+        return this.Send(bf);
+      };
+      /**
+       * 펜에 설정된 프로파일 정보를 요청하기 위한 버퍼를 만들고 전송하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @returns
+       */
+      this.ReqProfileInfo = (name) => {
+        const bf = new ByteUtil();
+        const profileName = toUTF8Array(name);
+        const neoStudioProfileName = "neonote2";
+        const neoStudioProfilePassword = [211, 105, 222, 205, 182, 10, 150, 31];
+        const neoNoteProfileName = "neolab";
+        const neoNoteProfilePassword = [107, 202, 107, 80, 93, 236, 167, 140];
+        const nameNeo = toUTF8Array(neoNoteProfileName);
+        const passwordNeo = new Uint8Array(neoNoteProfilePassword);
+        bf.Put(Const_default.PK_STX, false).Put(CMD_default.PEN_PROFILE_REQUEST);
+        bf.PutShort(9).PutArray(nameNeo, 8).Put(ProfileType.InfoProfile);
+        bf.Put(Const_default.PK_ETX, false);
+        return this.Send(bf);
+      };
+      /**
+       * 펜에 설정된 프로파일 내 데이터 작성을 요청하기 위한 버퍼를 만들고 전송하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @param {string} password
+       * @param {Array} keys
+       * @param {Array} data
+       * @returns
+       */
+      this.ReqProfileWriteValue = (name, password, data) => {
+        const keyArray = [];
+        const dataArray = [];
+        for (const key in data) {
+          const keyValue = toUTF8Array(key);
+          keyArray.push(keyValue);
+          const dataValue = toUTF8Array(data[key]);
+          dataArray.push(dataValue);
+        }
+        const bf = new ByteUtil();
+        let dataLength = 0;
+        for (let i2 = 0; i2 < dataArray.length; i2++) {
+          dataLength += 16;
+          dataLength += 2;
+          dataLength += dataArray[i2].length;
+        }
+        const length = 18 + dataLength;
+        const profileName = toUTF8Array(name);
+        const profilePassword = toUTF8Array(password);
+        const neoStudioProfileName = "neonote2";
+        const neoStudioProfilePassword = [211, 105, 222, 205, 182, 10, 150, 31];
+        const neoNoteProfileName = "neolab";
+        const neoNoteProfilePassword = [107, 202, 107, 80, 93, 236, 167, 140];
+        const nameNeo = toUTF8Array(neoNoteProfileName);
+        const passwordNeo = new Uint8Array(neoNoteProfilePassword);
+        bf.Put(Const_default.PK_STX, false).Put(CMD_default.PEN_PROFILE_REQUEST);
+        bf.PutShort(length).PutArray(nameNeo, 8).Put(ProfileType.WriteProfileValue).PutArray(passwordNeo, 8).Put(dataArray.length);
+        for (let i2 = 0; i2 < keyArray.length; i2++) {
+          bf.PutArray(keyArray[i2], 16).PutShort(dataArray[i2].length).PutArray(dataArray[i2], dataArray[i2].length);
+        }
+        bf.Put(Const_default.PK_ETX, false);
+        return this.Send(bf);
+      };
+      /**
+       * 펜에 설정된 프로파일 내 데이터 정보를 요청하기 위한 버퍼를 만들고 전송하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @param {Array} keys
+       * @returns
+       */
+      this.ReqProfileReadValue = (name, keys) => {
+        const bf = new ByteUtil();
+        const length = 10 + keys.length * 16;
+        const profileName = toUTF8Array(name);
+        const neoStudioProfileName = "neonote2";
+        const neoStudioProfilePassword = [211, 105, 222, 205, 182, 10, 150, 31];
+        const neoNoteProfileName = "neolab";
+        const neoNoteProfilePassword = [107, 202, 107, 80, 93, 236, 167, 140];
+        const nameNeo = toUTF8Array(neoNoteProfileName);
+        const passwordNeo = new Uint8Array(neoNoteProfilePassword);
+        bf.Put(Const_default.PK_STX, false).Put(CMD_default.PEN_PROFILE_REQUEST);
+        bf.PutShort(length).PutArray(nameNeo, 8).Put(ProfileType.ReadProfileValue).Put(keys.length);
+        for (let i2 = 0; i2 < keys.length; i2++) {
+          const keyValue = toUTF8Array(keys[i2]);
+          bf.PutArray(keyValue, 16);
+        }
+        bf.Put(Const_default.PK_ETX, false);
+        return this.Send(bf);
+      };
+      /**
+       * 펜에 설정된 프로파일 내 데이터 제거를 요청하기 위한 버퍼를 만들고 전송하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @param {string} password
+       * @param {Array} keys
+       * @returns
+       */
+      this.ReqProfileDeleteValue = (name, password, keys) => {
+        const bf = new ByteUtil();
+        const length = 18 + keys.length * 16;
+        const profileName = toUTF8Array(name);
+        const profilePassword = toUTF8Array(password);
+        const neoStudioProfileName = "neonote2";
+        const neoStudioProfilePassword = [211, 105, 222, 205, 182, 10, 150, 31];
+        const neoNoteProfileName = "neolab";
+        const neoNoteProfilePassword = [107, 202, 107, 80, 93, 236, 167, 140];
+        const nameNeo = toUTF8Array(neoNoteProfileName);
+        const passwordNeo = new Uint8Array(neoNoteProfilePassword);
+        bf.Put(Const_default.PK_STX, false).Put(CMD_default.PEN_PROFILE_REQUEST);
+        bf.PutShort(length).PutArray(nameNeo, 8).Put(ProfileType.DeleteProfileValue).PutArray(passwordNeo, 8).Put(keys.length);
+        for (let i2 = 0; i2 < keys.length; i2++) {
+          const keyValue = toUTF8Array(keys[i2]);
+          bf.PutArray(keyValue, 16);
+        }
+        bf.Put(Const_default.PK_ETX, false);
+        return this.Send(bf);
+      };
+      /**
+       * 데이터를 zlib으로 압축하는 함수
+       * @param {Uint8Array} data
+       * @returns
+       */
+      this.Compress = async (data) => {
+        const input = new Uint8Array(data);
+        let compressData = new Uint8Array();
+        return new Promise((resolve, reject) => {
+          zlib_default.deflate(input, { level: 9 }, async (err2, res) => {
+            if (!err2) {
+              const zipU8 = new Uint8Array(res);
+              compressData = zipU8;
+              resolve(compressData);
+            } else {
+              log("zip error", err2);
+              reject(err2);
+            }
+          });
+        });
+      };
+      /**
+       * 펌웨어 업데이트 파일 등을 읽을 때 비동기처리를 위한 함수
+       * @param file
+       * @returns
+       */
+      this.ReadFileAsync = async (file) => {
+        return new Promise((resolve, reject) => {
+          let reader = new FileReader();
+          reader.onload = () => {
+            resolve(reader.result);
+          };
+          reader.onerror = reject;
+          reader.readAsArrayBuffer(file);
+        });
+      };
+      this.penController = penController;
+      this.defaultConfig = Object.freeze({
+        SupportedProtocolVersion: "2.18",
+        PEN_PROFILE_SUPPORT_PROTOCOL_VERSION: 2.18,
+        DEFAULT_PASSWORD: "0000"
+      });
+      this.state = {
+        isFwCompress: false,
+        fwPacketSize: 0,
+        fwFile: null
+      };
+    }
+    //
+    // Request
+    //
+    /**
+     * 펜에 대한 버전(정보)를 요청하기 위한 버퍼를 만들고 펜에 전송하는 함수
+     * - 펜과 연결 성공 시 가장 먼저 수행하는 작업
+     */
+    ReqVersion() {
+      let bf = new ByteUtil();
+      let StrAppVersion = toUTF8Array("0.0.0.0");
+      let StrProtocolVersion = toUTF8Array(this.defaultConfig.SupportedProtocolVersion);
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.VERSION_REQUEST).PutShort(42).PutNull(16).Put(240).Put(1).PutArray(StrAppVersion, 16).PutArray(StrProtocolVersion, 8).Put(Const_default.PK_ETX, false);
+      this.Send(bf);
+    }
+    // NOTE: SendPen
+    ReqVersionTask() {
+      setTimeout(() => this.ReqVersion(), 500);
+    }
+    //
+    // Password
+    //
+    /**
+     * 펜에 설정된 비밀번호를 변경 요청하기 위한 버퍼를 만들고 펜에 전송하는 함수
+     * @param {string} oldPassword
+     * @param {string} newPassword
+     * @returns
+     */
+    ReqSetUpPassword(oldPassword, newPassword = "") {
+      if (!oldPassword) return false;
+      log("ReqSetUpPassword", oldPassword, newPassword);
+      if (newPassword === this.defaultConfig.DEFAULT_PASSWORD) return false;
+      let oPassByte = toUTF8Array(oldPassword);
+      let nPassByte = toUTF8Array(newPassword);
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.PASSWORD_CHANGE_REQUEST).PutShort(33).Put(newPassword === "" ? 0 : 1).PutArray(oPassByte, 16).PutArray(nPassByte, 16).Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    /**
+     * 펜에 비밀번호 버퍼를 만들고 전송하는 함수
+     * @param {string} password
+     * @returns
+     */
+    ReqInputPassword(password) {
+      if (!password) return false;
+      if (password === this.defaultConfig.DEFAULT_PASSWORD) return false;
+      let bStrByte = toUTF8Array(password);
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.PASSWORD_REQUEST).PutShort(16).PutArray(bStrByte, 16).Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    /**
+     * 펜에 대한 각종 설정 확인을 요청하기 위한 버퍼를 만들고 전송하는 함수
+     * @returns
+     */
+    ReqPenStatus() {
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.SETTING_INFO_REQUEST).PutShort(0).Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    /**
+     * 펜에 대한 각종 설정 변경을 요청하기 위한 버퍼를 만들고 전송하는 함수
+     * @param {number} stype - SettingType, 변경하고자 하는 설정
+     * @param {any} value
+     * @returns
+     */
+    RequestChangeSetting(stype, value) {
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.SETTING_CHANGE_REQUEST);
+      switch (stype) {
+        case SettingType.TimeStamp:
+          bf.PutShort(9).Put(stype).PutLong(value);
+          break;
+        case SettingType.AutoPowerOffTime:
+          bf.PutShort(3).Put(stype).PutShort(value);
+          break;
+        case SettingType.LedColor:
+          let b = intToByteArray(value);
+          let nBytes = new Uint8Array([b[3], b[2], b[1], b[0]]);
+          bf.PutShort(5).Put(stype).PutArray(nBytes, 4);
+          break;
+        case SettingType.PenCapOff:
+        case SettingType.AutoPowerOn:
+        case SettingType.Beep:
+        case SettingType.Hover:
+        case SettingType.OfflineData:
+        case SettingType.DownSampling:
+          bf.PutShort(2).Put(stype).Put(value ? 1 : 0);
+          break;
+        case SettingType.Sensitivity:
+          bf.PutShort(2).Put(stype).Put(value);
+          break;
+        case SettingType.UsbMode:
+          bf.PutShort(2).Put(stype).Put(value);
+          break;
+        case SettingType.BtLocalName:
+          let StrByte = toUTF8Array(value);
+          bf.PutShort(18).Put(stype).Put(16).PutArray(StrByte, 16);
+          break;
+        case SettingType.FscSensitivity:
+          bf.PutShort(2).Put(stype).PutShort(value);
+          break;
+        case SettingType.DataTransmissionType:
+          bf.PutShort(2).Put(stype).Put(value);
+          break;
+        case SettingType.BeepAndLight:
+          bf.PutShort(2).Put(stype).Put(0);
+          break;
+        case SettingType.InitDisk:
+          bf.PutShort(5).Put(stype).PutInt(1327237954);
+          break;
+        default:
+          log("undefined setting type");
+      }
+      bf.Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    /**
+     * 펜 설정 중 시각을 변경하기 위한 함수
+     * - 1970년 1월 1일부터 millisecond tick (지금은 현재 시각으로 변경)
+     * @returns
+     */
+    ReqSetupTime() {
+      let timetick = Date.now();
+      return this.RequestChangeSetting(SettingType.TimeStamp, timetick);
+    }
+    /**
+     * 펜 설정 중 자동종료 시간을 변경하기 위한 함수
+     * 분 단위 (v2.17 = 5 ~ 3600 // v2.18 = 1 ~ 3600)
+     * @param {number} minute
+     * @returns
+     */
+    ReqSetupPenAutoShutdownTime(minute) {
+      return this.RequestChangeSetting(SettingType.AutoPowerOffTime, minute);
+    }
+    /**
+     * 펜 설정 중 펜 뚜껑을 닫을 경우 전원이 꺼지는 기능을 on / off 로 변경하기 위한 함수
+     * @param {boolean} enable - on / off
+     * @returns
+     */
+    ReqSetupPenCapPower(enable) {
+      return this.RequestChangeSetting(SettingType.PenCapOff, enable);
+    }
+    /**
+     * 펜 설정 중 펜 뚜껑 혹은 펜 필기 시 자동으로 전원이 켜지는 기능을 on / off 로 변경하기 위한 함수
+     * @param {boolean} enable - on / off
+     * @returns
+     */
+    ReqSetupPenAutoPowerOn(enable) {
+      return this.RequestChangeSetting(SettingType.AutoPowerOn, enable);
+    }
+    /**
+     * 펜 설정 중 비프음 기능을 on / off 로 변경하기 위한 함수
+     * @param {boolean} enable - on / off
+     * @returns
+     */
+    ReqSetupPenBeep(enable) {
+      return this.RequestChangeSetting(SettingType.Beep, enable);
+    }
+    /**
+     * 펜 설정 중 호버 모드 기능을 on / off 로 변경하기 위한 함수
+     * - 호버기능 : 펜의 위치를 penDown 전에 미리 가늠해 볼 수 있도록 시각적인 dot를 표시하는 기능
+     * @param {boolean} enable - on / off
+     * @returns
+     */
+    ReqSetupHoverMode(enable) {
+      return this.RequestChangeSetting(SettingType.Hover, enable);
+    }
+    /**
+     * 펜 설정 중 오프라인 저장 기능을 on / off 로 변경하기 위한 함수
+     * @param {boolean} enable - on / off
+     * @returns
+     */
+    ReqSetupOfflineData(enable) {
+      return this.RequestChangeSetting(SettingType.OfflineData, enable);
+    }
+    /**
+     * 펜 설정 중 펜 LED 색을 변경하기 위한 함수
+     * @param {number} color - argb
+     * @returns
+     */
+    ReqSetupPenColor(color) {
+      return this.RequestChangeSetting(SettingType.LedColor, color);
+    }
+    /**
+     * 펜 설정 중 펜의 필압 민감도를 변경하기 위한 함수
+     * - FSR 필압 센서가 달린 모델에서만 이용
+     * @param {number} step - 0 ~ 4 ( 0이 가장 민감 )
+     * @returns
+     */
+    ReqSetupPenSensitivity(step) {
+      return this.RequestChangeSetting(SettingType.Sensitivity, step);
+    }
+    /**
+     * 펜 설정 중 USB 모드 설정을 변경하기 위한 함수
+     * @param {number} mode - 0 or 1
+     * @returns
+     */
+    ReqSetupUsbMode(mode) {
+      return this.RequestChangeSetting(SettingType.UsbMode, mode);
+    }
+    /**
+     * 펜 설정 중 다운 샘플링 기능을 on / off 로 변경하기 위한 함수
+     * @param {boolean} enable - on / off
+     * @returns
+     */
+    ReqSetupDownSampling(enable) {
+      return this.RequestChangeSetting(SettingType.DownSampling, enable);
+    }
+    /**
+     * 펜 설정 중 블루투스 로컬 네임을 변경하기 위한 함수
+     * @param {string} btLocalName
+     * @returns
+     */
+    ReqSetupBtLocalName(btLocalName) {
+      return this.RequestChangeSetting(SettingType.BtLocalName, btLocalName);
+    }
+    /**
+     * 펜 설정 중 펜의 필압 민감도를 변경하기 위한 함수
+     * - FSC 필압 센서가 달린 모델에서만 이용
+     * @param {number} step - 0 ~ 4 ( 0이 가장 민감 )
+     * @returns
+     */
+    ReqSetupPenFscSensitivity(step) {
+      return this.RequestChangeSetting(SettingType.FscSensitivity, step);
+    }
+    /**
+     * 펜 설정 중 펜의 데이터 전송 방식을 변경하기 위한 함수
+     * - 현재 사용하지 않음
+     * @param {number} type - 0 or 1
+     * @returns
+     */
+    ReqSetupDataTransmissionType(type) {
+      return this.RequestChangeSetting(SettingType.DataTransmissionType, type);
+    }
+    /**
+     * 펜 설정 중 펜의 비프음과 LED를 변경하기 위한 함수
+     * F90 펜 전용
+     * @returns
+     */
+    ReqBeepAndLight() {
+      return this.RequestChangeSetting(SettingType.BeepAndLight, null);
+    }
+    /**
+     * 펜 설정 중 펜의 디스크를 초기화하기 위한 함수
+     * @returns
+     */
+    ReqInitPenDisk() {
+      return this.RequestChangeSetting(SettingType.InitDisk, null);
+    }
+    /**
+     * 현재 지원 가능한 펜인지 버전을 비교해 확인하는 함수
+     * @returns
+     */
+    IsSupportPenProfile() {
+      let temp = this.penController.mParserV2.penVersionInfo.ProtocolVersion.split(".");
+      let tempVer = "";
+      if (temp.length === 1) tempVer += temp[0];
+      else if (temp.length >= 2) tempVer += temp[0] + "." + temp[1];
+      let ver = parseFloat(tempVer);
+      return ver >= this.defaultConfig.PEN_PROFILE_SUPPORT_PROTOCOL_VERSION;
+    }
+    /**
+     * 펜의 실시간 필기 데이터에 대한 전송을 요청하기 위한 버퍼를 만들고 전송하는 함수
+     * @param {array} sectionIds
+     * @param {array} ownerIds
+     * @param {(array | null)} noteIds - null일 경우 노트를 구분하지 않는다.
+     * @returns {boolean}
+     */
+    ReqAddUsingNotes(sectionIds, ownerIds, noteIds) {
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.ONLINE_DATA_REQUEST);
+      if (noteIds) {
+        let length = 2 + noteIds.length * 8;
+        bf.PutShort(length).PutShort(noteIds.length);
+        noteIds.forEach((item, index) => {
+          bf.PutArray(GetSectionOwnerByte(sectionIds[index], ownerIds[index]), 4).PutInt(item);
+        });
+      } else if (sectionIds && ownerIds) {
+        bf.PutShort(2 + 8 * sectionIds.length).PutShort(sectionIds.length);
+        sectionIds.forEach((section, index) => {
+          bf.PutArray(GetSectionOwnerByte(section, ownerIds[index]), 4).PutInt(4294967295);
+        });
+      } else {
+        bf.PutShort(2).Put(255).Put(255);
+      }
+      bf.Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    //
+    // MARK: Offline Data
+    //
+    /**
+     * 펜에 저장된 오프라인 필기 데이터의 종이 정보(note)를 요청하기 위한 버퍼를 만들고 전송하는 함수
+     * - section, owner 모두 0일 경우 저장된 모든 note ID 리스트 (최대 64개)를 요청한다.
+     * @param {number} section
+     * @param {number} owner
+     * @returns
+     */
+    ReqOfflineNoteList(section = 0, owner = 0) {
+      let pInfo = new Uint8Array([255, 255, 255, 255]);
+      if (section > 0 && owner > 0) {
+        pInfo = GetSectionOwnerByte(section, owner);
+      }
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.OFFLINE_NOTE_LIST_REQUEST).PutShort(4).PutArray(pInfo, 4).Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    /**
+     * 펜에 저장된 오프라인 필기 데이터의 종이 정보(page)를 요청하기 위한 버퍼를 만들고 전송하는 함수
+     * - section, owner, note 와 일치하는 하나의 노트의 page ID 리스트 (최대 128개)를 요청한다.
+     * @param {number} section
+     * @param {number} owner
+     * @param {number} note
+     * @returns
+     */
+    ReqOfflinePageList(section, owner, note) {
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.OFFLINE_PAGE_LIST_REQUEST).PutShort(8).PutArray(GetSectionOwnerByte(section, owner), 4).PutInt(note).Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    /**
+     * 펜에 저장된 오프라인 필기 데이터를 한 note ID 혹은 다수의 page ID로 요청하기 위한 버퍼를 만들고 전송하는 함수
+     * @param {number} section
+     * @param {number} owner
+     * @param {number} note
+     * @param {boolean} deleteOnFinished - true일 경우 전송한 데이터 삭제, false일 경우 전송한 데이터 삭제 안함
+     * @param {array} pages - 빈 배열일 경우 노트 내 모든 page를 요청
+     * @returns
+     */
+    ReqOfflineData(section, owner, note, deleteOnFinished = true, pages = []) {
+      let length = 14 + pages.length * 4;
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.OFFLINE_DATA_REQUEST).PutShort(length).Put(deleteOnFinished ? 1 : 2).Put(1).PutArray(GetSectionOwnerByte(section, owner), 4).PutInt(note).PutInt(pages == null ? 0 : pages.length);
+      if (pages.length > 0) {
+        pages.forEach((page) => {
+          bf.PutInt(page);
+        });
+      }
+      bf.Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    /**
+     * 펜에 저장된 오프라인 필기 데이터에 대한 삭제를 요청하기 위한 버퍼를 만들고 전송하는 함수
+     * - 노트 단위 삭제, 최대 64개
+     * @param {number} section
+     * @param {number} owner
+     * @param {array} notes
+     * @returns
+     */
+    ReqOfflineDelete(section, owner, notes) {
+      let bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.OFFLINE_DATA_DELETE_REQUEST);
+      let length = 5 + notes.length * 4;
+      bf.PutShort(length).PutArray(GetSectionOwnerByte(section, owner), 4).Put(notes.length);
+      notes.forEach((noteId) => {
+        bf.PutInt(noteId);
+      });
+      bf.Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    /**
+     * 펜에 설치된 펌웨어를 업그레이드하기 위해 펜에게 질의하기 위한 버퍼를 만들고 전송하는 함수
+     * @param {File} file
+     * @param {string} version
+     * @param {boolean} isCompressed
+     * @returns
+     */
+    async ReqPenSwUpgrade(file, version, isCompressed) {
+      const bf = new ByteUtil();
+      const deviceName = this.penController.info.DeviceName;
+      const deviceProtocolVersion = this.penController.info.ProtocolVersion;
+      const fwdeviceName = toUTF8Array(deviceName);
+      const fwVersion = toUTF8Array(version);
+      const fileSize = file.size;
+      const fwBf = new ByteUtil();
+      const fwBuf = await this.ReadFileAsync(file);
+      const fwBufView = new Uint8Array(fwBuf);
+      fwBf.PutArray(fwBufView, fwBufView.length);
+      let packetSize = 256;
+      if (deviceName === "NSP-D100" || deviceName === "NSP-D101" || deviceName === "NSP-C200" || deviceName === "NWP-F121" || deviceName === "NWP-F121C") {
+        packetSize = 64;
+      }
+      let isCompress = 0;
+      this.state.isFwCompress = !!isCompress;
+      this.state.fwPacketSize = packetSize;
+      this.state.fwFile = fwBf;
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.FIRMWARE_UPLOAD_REQUEST);
+      bf.PutShort(42).PutArray(fwdeviceName, 16).PutArray(fwVersion, 16).PutInt(fileSize).PutInt(packetSize).Put(isCompress).Put(fwBf.GetCheckSumBF());
+      bf.Put(Const_default.PK_ETX, false);
+      log("ReqPenSwUpgrade", bf);
+      return this.Send(bf);
+    }
+    /**
+     * 펜에서 승인한 펌웨어 업그레이드에 따라 알맞는 펌웨어 데이터를 업로드 하기 위한 버퍼를 만들고 전송하는 함수
+     * @param {number} offset
+     * @param {Uint8Array} data
+     * @param {number} status
+     * @returns
+     */
+    async ReqPenSwUpload(offset, data, status2) {
+      const bf = new ByteUtil();
+      bf.Put(Const_default.PK_STX, false).Put(CMD_default.FIRMWARE_PACKET_RESPONSE);
+      if (status2 === FirmwareStatusType.STATUS_ERROR) {
+        bf.Put(1);
+      } else {
+        const beforeCompressSize = data.length;
+        let afterCompressSize = 0;
+        let compressData;
+        if (this.state.isFwCompress) {
+          compressData = await this.Compress(data);
+          afterCompressSize = compressData.length;
+        } else {
+          compressData = data;
+          afterCompressSize = 0;
+        }
+        bf.Put(0).PutShort(14 + compressData.length).Put(0).PutInt(offset).Put(bf.GetCheckSumData(data)).PutInt(beforeCompressSize).PutInt(afterCompressSize).PutArray(compressData, compressData.length);
+      }
+      bf.Put(Const_default.PK_ETX, false);
+      return this.Send(bf);
+    }
+    OnDisconnected() {
+    }
+    // MARK: Util
+    /**
+     * 만들어진 버퍼(펜에 요청을 위한 버퍼)를 펜 콘트롤러의 handleWrite로 전달하는 함수
+     * - 해당 함수가 기능하기 위해서는 handleWrite를 구현해야 한다.
+     * @param {ByteUtil} bf
+     * @returns
+     */
+    Send(bf) {
+      const u82 = bf.ToU8Array();
+      this.penController.handleWrite(u82);
+      return true;
+    }
+  };
+
+  // ../vendor/web_pen_sdk/PenCotroller/PenController.ts
+  var PenController = class {
+    constructor() {
+      /**
+       * 펜에 프로파일 생성을 요청하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @param {string} password
+       */
+      this.RequestProfileCreate = (name, password) => {
+        this.Request(
+          () => this.mClientV1.ReqProfileCreate(name, password),
+          () => this.mClientV2.ReqProfileCreate(name, password)
+        );
+      };
+      /**
+       * 펜에 설정된 프로파일 제거를 요청하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @param {string} password
+       */
+      this.RequestProfileDelete = (name, password) => {
+        this.Request(
+          () => this.mClientV1.ReqProfileDelete(name, password),
+          () => this.mClientV2.ReqProfileDelete(name, password)
+        );
+      };
+      /**
+       * 펜에 설정된 프로파일 정보를 요청하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       */
+      this.RequestProfileInfo = (name) => {
+        this.Request(
+          () => this.mClientV1.ReqProfileInfo(name),
+          () => this.mClientV2.ReqProfileInfo(name)
+        );
+      };
+      /**
+       * 펜에 설정된 프로파일 내 데이터 작성을 요청하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @param {string} password
+       * @param {Array} keys
+       * @param {Array} data
+       */
+      this.RequestProfileWriteValue = (name, password, data) => {
+        this.Request(
+          () => this.mClientV1.ReqProfileWriteValue(name, password, data),
+          () => this.mClientV2.ReqProfileWriteValue(name, password, data)
+        );
+      };
+      /**
+       * 펜에 설정된 프로파일 내 데이터 정보를 요청하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @param {Array} keys
+       */
+      this.RequestProfileReadValue = (name, keys) => {
+        this.Request(
+          () => this.mClientV1.ReqProfileReadValue(name, keys),
+          () => this.mClientV2.ReqProfileReadValue(name, keys)
+        );
+      };
+      /**
+       * 펜에 설정된 프로파일 내 데이터 제거를 요청하는 함수
+       * - 프로파일은 네오랩을 통해 인증받은 뒤에 사용가능하기에, 현재는 고정값을 이용
+       * @param {string} name
+       * @param {string} password
+       * @param {Array} keys
+       */
+      this.RequestProfileDeleteValue = (name, password, keys) => {
+        this.Request(
+          () => this.mClientV1.ReqProfileDeleteValue(name, password, keys),
+          () => this.mClientV2.ReqProfileDeleteValue(name, password, keys)
+        );
+      };
+      this.mParserV2 = new PenClientParserV2(this);
+      this.mClientV2 = new PenRequestV2(this);
+      this.onDot = null;
+      this.onMessage = null;
+      this.Protocol = 2;
+      this.handleWrite = null;
+      this.info = {};
+    }
+    /**
+     *
+     *
+     * @param {callback} handledot
+     * @param {callback} handlemessage
+     * @memberof PenController
+     */
+    addCallback(handledot, handlemessage) {
+      this.onDot = handledot;
+      this.onMessage = handlemessage;
+    }
+    // MARK: Step2 Add Write Pipe
+    addWrite(handlewrite) {
+      this.handleWrite = handlewrite;
+    }
+    /**
+     * Step3 Send Data from Pen
+     * @param {array} buff - uint8array
+     */
+    putData(buff) {
+      if (this.Protocol === 1) {
+      } else {
+        this.mParserV2.ProtocolParse(buff);
+      }
+    }
+    // Error process
+    /**
+     * 도트 에러 발생 시 메시지 출력을 위한 함수
+     * - 해당 함수가 기능하기 위해서는 onMessage를 구현해야 한다.
+     * @param {any} args
+     */
+    onErrorDetected(args) {
+      this.onMessage(this, PenMessageType_default.EVENT_DOT_ERROR, args);
+    }
+    //SDK Local logic
+    // step1
+    localprocessSetRTCTime() {
+      this.SetRtcTime();
+    }
+    // Step2
+    localProcessPenSettingInfo() {
+      this.RequestPenStatus();
+    }
+    /**
+     * 프로토콜 버전에 따라 펜에 요청하는 함수를 분기 실행하는 함수
+     * @param {any} requestV1
+     * @param {any} requestV2
+     * @returns
+     */
+    Request(requestV1, requestV2) {
+      if (this.Protocol === -1) {
+        throw new SDKError("RequestIsUnreached");
+      }
+      if (this.Protocol === 1) {
+        if (!requestV1) throw new SDKError("UnaavailableRequest");
+        return requestV1();
+      } else {
+        if (!requestV2) throw new SDKError("UnaavailableRequest");
+        return requestV2();
+      }
+    }
+    // MARK: Request
+    //Request Version Info
+    /**
+     * 현재 버전을 요청하는 함수
+     * @returns
+     */
+    RequestVersionInfo() {
+      return this.mParserV2.penVersionInfo;
+    }
+    // Request
+    /**
+     * 펜에 설정된 비밀번호를 변경 요청하는 함수
+     * @param {string} oldone
+     * @param {string} [newone=""]
+     * @memberof PenController
+     */
+    SetPassword(oldone, newone = "") {
+      if (newone === this.mClientV2.defaultConfig.DEFAULT_PASSWORD) {
+        this.onMessage(this, PenMessageType_default.PEN_ILLEGAL_PASSWORD_0000, null);
+        return;
+      } else {
+        this.mParserV2.state.newPassword = newone;
+      }
+      this.Request(
+        () => {
+        },
+        () => {
+          this.mClientV2.ReqSetUpPassword(oldone, newone);
+        }
+      );
+    }
+    /**
+     * 펜에 비밀번호를 전송하는 함수
+     * @param {string} password
+     */
+    InputPassword(password) {
+      this.Request(
+        () => this.mClientV1.ReqInputPassword(password),
+        () => this.mClientV2.ReqInputPassword(password)
+      );
+    }
+    /**
+     * 펜에 대한 각종 설정 확인을 요청하는 함수
+     */
+    RequestPenStatus() {
+      this.Request(
+        () => this.mClientV1.ReqPenStatus(),
+        () => this.mClientV2.ReqPenStatus()
+      );
+    }
+    /**
+     * 펜 설정 중 시각을 변경 요청하는 함수
+     * - 1970년 1월 1일부터 millisecond tick (지금은 현재 시각으로 변경)
+     */
+    SetRtcTime() {
+      this.Request(null, () => this.mClientV2.ReqSetupTime());
+    }
+    /**
+     * 펜 설정 중 자동종료 시간을 변경 요청하는 함수
+     * 분 단위 (v2.17 = 5 ~ 3600 // v2.18 = 1 ~ 3600)
+     * @param {number} minute
+     */
+    SetAutoPowerOffTime(minute) {
+      this.Request(
+        () => this.mClientV1.ReqSetupPenAutoShutdownTime(minute),
+        () => this.mClientV2.ReqSetupPenAutoShutdownTime(minute)
+      );
+    }
+    /**
+     * 펜 설정 중 펜 뚜껑을 닫을 경우 전원이 꺼지는 기능을 변경 요청하는 함수
+     * @param {boolean} enable - on / off
+     */
+    SetPenCapPowerOnOffEnable(enable) {
+      this.Request(null, () => this.mClientV2.ReqSetupPenCapPower(enable));
+    }
+    /**
+     * 펜 설정 중 펜 뚜껑 혹은 펜 필기 시 자동으로 전원이 켜지는 기능을 변경 요청하는 함수
+     * @param {boolean} enable - on / off
+     */
+    SetAutoPowerOnEnable(enable) {
+      this.Request(
+        () => this.mClientV1.ReqSetupPenAutoPowerOn(enable),
+        () => this.mClientV2.ReqSetupPenAutoPowerOn(enable)
+      );
+    }
+    /**
+     * 펜 설정 중 비프음 기능을 변경 요청하는 함수
+     * @param {boolean} enable - on / off
+     */
+    SetBeepSoundEnable(enable) {
+      this.Request(
+        () => this.mClientV1.ReqSetupPenBeep(enable),
+        () => this.mClientV2.ReqSetupPenBeep(enable)
+      );
+    }
+    /**
+     * 펜 설정 중 호버 모드 기능을 변경 요청하는 함수
+     * - 호버기능 : 펜의 위치를 penDown 전에 미리 가늠해 볼 수 있도록 시각적인 dot를 표시하는 기능
+     * @param {boolean} enable - on / off
+     */
+    SetHoverEnable(enable) {
+      this.Request(
+        () => this.mClientV1.SetHoverEnable(enable),
+        () => this.mClientV2.ReqSetupHoverMode(enable)
+      );
+    }
+    /**
+     * 펜 설정 중 오프라인 저장 기능을 변경 요청하는 함수
+     * @param {boolean} enable - on / off
+     */
+    SetOfflineDataEnable(enable) {
+      this.Request(null, () => this.mClientV2.ReqSetupOfflineData(enable));
+    }
+    /**
+     * 펜 설정 중 펜 LED 색을 변경 요청하는 함수
+     * @param {number} color - argb
+     */
+    SetColor(color) {
+      this.Request(
+        () => this.mClientV1.ReqSetupPenColor(color),
+        () => this.mClientV2.ReqSetupPenColor(color)
+      );
+    }
+    /**
+     * 펜 설정 중 펜의 필압 민감도를 변경 요청하는 함수
+     * - FSR 필압 센서가 달린 모델에서만 이용
+     * @param {number} step - 0 ~ 4 ( 0이 가장 민감 )
+     */
+    SetSensitivity(step) {
+      this.Request(
+        () => this.mClientV1.ReqSetupPenSensitivity(step),
+        () => this.mClientV2.ReqSetupPenSensitivity(step)
+      );
+    }
+    /**
+     * 펜 설정 중 펜의 디스크를 초기화 요청하는 함수
+     */
+    RequestInitPenDisk() {
+      this.Request(
+        () => this.mClientV1.ReqInitPenDisk(),
+        () => this.mClientV2.ReqInitPenDisk()
+      );
+    }
+    /**
+     * 펜의 실시간 필기 데이터에 대한 전송을 요청하는 함수
+     * @param {array} sections
+     * @param {array} owners
+     * @param {(array | null)}notes - null일 경우 노트를 구분하지 않는다.
+     */
+    RequestAvailableNotes(sections, owners, notes) {
+      this.Request(
+        () => this.mClientV1.ReqAddUsingNotes(sections, owners, notes),
+        () => this.mClientV2.ReqAddUsingNotes(sections, owners, notes)
+      );
+    }
+    // Offline List
+    // setion or owner  = null : All Note
+    /**
+     * 펜에 저장된 오프라인 필기 데이터의 종이 정보(note)를 요청하는 함수
+     * - section, owner 모두 0일 경우 저장된 모든 note ID 리스트 (최대 64개)를 요청한다.
+     * @param {number} section
+     * @param {number} owner
+     */
+    RequestOfflineNoteList(section, owner) {
+      this.Request(
+        () => this.mClientV1.ReqOfflineDataList(),
+        () => this.mClientV2.ReqOfflineNoteList(section, owner)
+      );
+    }
+    /**
+     * 펜에 저장된 오프라인 필기 데이터의 종이 정보(page)를 요청하는 함수
+     * - section, owner, note 와 일치하는 하나의 노트의 page ID 리스트 (최대 128개)를 요청한다.
+     * @param {number} section
+     * @param {number} owner
+     * @param {number} note
+     */
+    RequestOfflinePageList(section, owner, note) {
+      this.Request(
+        () => this.mClientV1.ReqOfflineDataList(),
+        () => this.mClientV2.ReqOfflinePageList(section, owner, note)
+      );
+    }
+    // Offline Data
+    /**
+     * 펜에 저장된 오프라인 필기 데이터를 한 note ID 혹은 다수의 page ID로 요청하는 함수
+     * @param {number} section
+     * @param {number} owner
+     * @param {number} note
+     * @param {boolean} deleteOnFinished - true일 경우 전송한 데이터 삭제, false일 경우 전송한 데이터 삭제 안함
+     * @param {array} pages - 빈 배열일 경우 노트 내 모든 page를 요청
+     * @returns
+     */
+    RequestOfflineData(section, owner, note, deleteOnFinished = true, pages = []) {
+      return this.Request(
+        () => this.mClientV1.ReqOfflineData(),
+        () => {
+          return this.mClientV2.ReqOfflineData(section, owner, note, deleteOnFinished, pages);
+        }
+      );
+    }
+    /**
+     * 펜에 저장된 오프라인 필기 데이터에 대한 삭제를 요청하는 함수
+     * - 노트 단위 삭제, 최대 64개
+     * @param {number} section
+     * @param {number} owner
+     * @param {array} notes
+     */
+    RequestOfflineDelete(section, owner, notes) {
+      this.Request(
+        () => this.mClientV1.ReqOfflineDelete(),
+        () => {
+          this.mClientV2.ReqOfflineDelete(section, owner, notes);
+        }
+      );
+    }
+    // Firmware Update
+    /**
+     * 펜에 설치된 펌웨어를 업그레이드하기 위해 펜에게 질의하는 함수
+     * @param {File} file
+     * @param {string} version
+     * @param {boolean} isCompressed
+     */
+    RequestFirmwareInstallation(file, version, isCompressed) {
+      this.Request(
+        () => this.mClientV1.ReqPenSwUpgrade(file),
+        () => {
+          this.mClientV2.ReqPenSwUpgrade(file, version, isCompressed);
+        }
+      );
+    }
+    /**
+     * 펜에 펌웨어 데이터를 업로드하는 함수
+     * @param {number} offset
+     * @param {Uint8Array} data
+     * @param {number} status
+     */
+    RequestFirmwareUpload(offset, data, status2) {
+      this.Request(
+        () => this.mClientV1.ReqPenSwUpload(),
+        () => this.mClientV2.ReqPenSwUpload(offset, data, status2)
+      );
+    }
+    OnConnected() {
+      if (this.Protocol !== 1) {
+        this.mParserV2.state.first = true;
+        this.mClientV2.ReqVersionTask();
+      }
+    }
+    OnDisconnected() {
+      if (this.Protocol === 1) this.mClientV1.OnDisconnected();
+      else this.mClientV2.OnDisconnected();
+      this.mParserV2.OnDisconnected();
+      this.onMessage(this, PenMessageType_default.PEN_DISCONNECTED, null);
+    }
+  };
+
+  // ../src/events.ts
+  var Emitter = class {
+    constructor() {
+      this.listeners = {};
+    }
+    on(event, fn) {
+      var _a4, _b2;
+      ((_b2 = (_a4 = this.listeners)[event]) != null ? _b2 : _a4[event] = /* @__PURE__ */ new Set()).add(fn);
+      return () => {
+        var _a5;
+        return (_a5 = this.listeners[event]) == null ? void 0 : _a5.delete(fn);
+      };
+    }
+    emit(event, payload) {
+      var _a4;
+      (_a4 = this.listeners[event]) == null ? void 0 : _a4.forEach((fn) => {
+        try {
+          fn(payload);
+        } catch (e) {
+          console.error("[NeoPen] listener error", e);
+        }
+      });
+    }
+    clear() {
+      this.listeners = {};
+    }
+  };
+
+  // ../src/types.ts
+  function pageId(k) {
+    return `${k.section}_${k.owner}_${k.note}_${k.page}`;
+  }
+  function sameKey(a, b) {
+    if (!a || !b) return false;
+    return a.section === b.section && a.owner === b.owner && a.note === b.note && a.page === b.page;
+  }
+  function validKey(k) {
+    return !!k && k.section >= 0 && k.owner >= 0 && k.note >= 0 && k.page >= 0;
+  }
+  function cleanPts(pts) {
+    const out = [];
+    for (let i2 = 0; i2 + 2 < pts.length; i2 += 3) {
+      if (pts[i2] >= 0 && pts[i2 + 1] >= 0) out.push(pts[i2], pts[i2 + 1], pts[i2 + 2]);
+    }
+    return out;
+  }
+
+  // ../src/pen/PenConnection.ts
+  var SERVICE_16 = 6641;
+  var NOTIFY_16 = 11169;
+  var WRITE_16 = 11168;
+  var SERVICE_128 = "4f99f138-9d53-5bfa-9e50-b147491afe68";
+  var NOTIFY_128 = "64cd86b1-2256-5aeb-9f04-2caf6c60ae57";
+  var WRITE_128 = "8bc8cc7d-88ca-56b0-af9a-9bf514d0d61a";
+  var DOT_DOWN = 0;
+  var DOT_MOVE = 1;
+  var DOT_UP = 2;
+  var PEN_NAME = /neo|smartpen|nwp|m1|lamy/i;
+  var sleep = (ms) => new Promise((r) => window.setTimeout(r, ms));
+  function keyOf(dot) {
+    var _a4, _b2, _c, _d, _e, _f;
+    const p = (_a4 = dot.pageInfo) != null ? _a4 : {};
+    return { section: (_b2 = p.section) != null ? _b2 : 0, owner: (_c = p.owner) != null ? _c : 0, note: (_e = (_d = p.book) != null ? _d : p.note) != null ? _e : 0, page: (_f = p.page) != null ? _f : 0 };
+  }
+  var PenConnection = class extends Emitter {
+    constructor(chooser2, gesture) {
+      super();
+      this.chooser = chooser2;
+      this.gesture = gesture;
+      this.device = null;
+      /** Ultima penna trovata: per ricollegarsi senza una nuova ricerca. */
+      this.lastDevice = null;
+      this.controller = null;
+      this.writeChar = null;
+      this.notifyChar = null;
+      this.writeChain = Promise.resolve();
+      this.status = { state: "disconnesso" };
+      /** Vero mentre apriamo la connessione GATT (le disconnessioni lì dentro si riprovano). */
+      this.connecting = false;
+      this.live = false;
+      // tratto live in costruzione
+      this.current = null;
+      // attese di messaggi dalla penna
+      this.waiters = [];
+      this.authWait = null;
+      /** Tratti raccolti durante lo scaricamento di una pagina. */
+      this.collecting = null;
+      this.collectKey = null;
+      /** Una sola operazione alla volta sulla penna. */
+      this.op = Promise.resolve();
+      this.onNotify = (event) => {
+        const value = event.target.value;
+        if (!value || !this.controller) return;
+        const arr = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+        this.controller.putData(Array.from(arr));
+      };
+      this.onGattDisconnected = () => {
+        var _a4;
+        if (this.connecting) return;
+        this.log("Penna disconnessa.");
+        this.finishCurrentStroke();
+        try {
+          (_a4 = this.controller) == null ? void 0 : _a4.OnDisconnected();
+        } catch (e) {
+        }
+        this.cleanup();
+      };
+    }
+    get isConnected() {
+      return this.status.state === "connesso" || this.status.state === "scaricamento";
+    }
+    get hasKnownDevice() {
+      return !!this.lastDevice;
+    }
+    getStatus() {
+      return this.status;
+    }
+    setSdkDebug(on) {
+      setDebug(on);
+    }
+    log(msg) {
+      this.emit("log", msg);
+    }
+    setStatus(patch) {
+      this.status = { ...this.status, ...patch };
+      this.emit("status", this.status);
+    }
+    /** Esegue le operazioni sulla penna una alla volta. */
+    exclusive(fn) {
+      const run = this.op.then(fn, fn);
+      this.op = run.catch(() => void 0);
+      return run;
+    }
+    // ---------------------------------------------------------------- connessione
+    /** Si collega e aspetta che la penna autorizzi la connessione. */
+    async connect(opts = {}) {
+      var _a4, _b2, _c, _d, _e;
+      if (this.isConnected) return;
+      const bt = navigator.bluetooth;
+      if (!bt) throw new Error("Web Bluetooth non disponibile in questa versione di Obsidian.");
+      this.live = !!opts.live;
+      let device;
+      if (opts.reuse && this.lastDevice) {
+        device = this.lastDevice;
+      } else {
+        this.setStatus({ state: "ricerca" });
+        if (!opts.quiet) this.log("Cerco la penna\u2026 (accendila e tienila vicina; chiudi Neo Studio sul telefono)");
+        try {
+          device = await this.requestPen((_a4 = opts.scanMs) != null ? _a4 : 3e4, !!opts.quiet);
+        } catch (e) {
+          this.setStatus({ state: "disconnesso" });
+          throw e;
+        }
+      }
+      this.device = device;
+      this.lastDevice = device;
+      this.setStatus({ state: "connessione", name: (_b2 = device.name) != null ? _b2 : "Neo Smartpen" });
+      if (!opts.quiet) this.log(`Trovata: ${(_c = device.name) != null ? _c : device.id}. Mi collego\u2026`);
+      device.addEventListener("gattserverdisconnected", this.onGattDisconnected);
+      const authorized = new Promise((resolve, reject) => this.authWait = { resolve, reject });
+      authorized.catch(() => void 0);
+      try {
+        this.connecting = true;
+        const attempts = opts.quiet ? 1 : 3;
+        let chars = null;
+        for (let attempt2 = 1; !chars; attempt2++) {
+          try {
+            const server = await withTimeout(device.gatt.connect(), 12e3, "la penna non risponde");
+            chars = await this.bindCharacteristics(server, !!opts.quiet);
+          } catch (e) {
+            if (attempt2 >= attempts) throw e;
+            if (!opts.quiet) this.log(`La penna ha chiuso la connessione, riprovo (${attempt2 + 1}/${attempts})\u2026`);
+            await sleep(1200);
+          }
+        }
+        this.connecting = false;
+        this.notifyChar = chars.notify;
+        this.writeChar = chars.write;
+        this.setupController(device);
+        await this.notifyChar.startNotifications();
+        this.notifyChar.addEventListener("characteristicvaluechanged", this.onNotify);
+        this.controller.OnConnected();
+        if (!opts.quiet) this.log("Canale aperto, attendo l'autorizzazione della penna\u2026");
+        await withTimeout(authorized, 2e4, "la penna non ha autorizzato la connessione");
+      } catch (e) {
+        this.connecting = false;
+        this.authWait = null;
+        if (!opts.quiet) this.log(`Connessione fallita: ${(_d = e == null ? void 0 : e.message) != null ? _d : e}`);
+        try {
+          (_e = device.gatt) == null ? void 0 : _e.disconnect();
+        } catch (e2) {
+        }
+        this.cleanup();
+        throw e;
+      }
+    }
+    /** Cerca la penna: prima tra quelle già permesse, poi con una ricerca Bluetooth. */
+    async requestPen(scanMs, quiet) {
+      var _a4, _b2, _c;
+      const bt = navigator.bluetooth;
+      try {
+        const known = (_b2 = await ((_a4 = bt.getDevices) == null ? void 0 : _a4.call(bt))) != null ? _b2 : [];
+        const d = known.find((x2) => {
+          var _a5;
+          return PEN_NAME.test((_a5 = x2.name) != null ? _a5 : "");
+        });
+        if (d) return d;
+      } catch (e) {
+      }
+      this.chooser.setQuiet(quiet);
+      const timeout = window.setTimeout(() => {
+        if (!quiet) this.log(`Nessuna penna trovata entro ${Math.round(scanMs / 1e3)} secondi: annullo la ricerca.`);
+        this.chooser.cancel();
+      }, scanMs);
+      try {
+        const run = () => bt.requestDevice({
+          filters: [{ services: [SERVICE_16] }, { services: [SERVICE_128] }],
+          optionalServices: [SERVICE_16, SERVICE_128]
+        });
+        return this.gesture ? await this.gesture(run) : await run();
+      } catch (e) {
+        throw new Error(`Ricerca fallita: ${(_c = e == null ? void 0 : e.message) != null ? _c : e}`);
+      } finally {
+        window.clearTimeout(timeout);
+        this.chooser.setQuiet(false);
+      }
+    }
+    async bindCharacteristics(server, quiet) {
+      try {
+        const s = await server.getPrimaryService(SERVICE_16);
+        const notify = await s.getCharacteristic(NOTIFY_16);
+        const write = await s.getCharacteristic(WRITE_16);
+        if (!quiet) this.log("Servizio penna (16 bit) trovato.");
+        return { notify, write };
+      } catch (e) {
+        const s = await server.getPrimaryService(SERVICE_128);
+        const notify = await s.getCharacteristic(NOTIFY_128);
+        const write = await s.getCharacteristic(WRITE_128);
+        if (!quiet) this.log("Servizio penna (128 bit) trovato.");
+        return { notify, write };
+      }
+    }
+    setupController(device) {
+      const c = new PenController();
+      c.device = device;
+      c.addWrite((data) => this.enqueueWrite(data));
+      c.addCallback(
+        (_ctrl, dot) => this.onDot(dot),
+        (_ctrl, type, args) => this.onMessage(type, args)
+      );
+      this.controller = c;
+    }
+    /** Le scritture GATT vanno serializzate: due in parallelo danno "operation already in progress". */
+    enqueueWrite(data) {
+      const char = this.writeChar;
+      if (!char) return;
+      const buf = new Uint8Array(data);
+      this.writeChain = this.writeChain.then(() => char.writeValue(buf)).catch(async (e) => {
+        var _a4;
+        await sleep(300);
+        try {
+          await char.writeValue(buf);
+        } catch (e2) {
+          this.log(`Scrittura verso la penna fallita: ${(_a4 = e == null ? void 0 : e.message) != null ? _a4 : e}`);
+        }
+      });
+    }
+    disconnect() {
+      var _a4, _b2;
+      if ((_b2 = (_a4 = this.device) == null ? void 0 : _a4.gatt) == null ? void 0 : _b2.connected) this.device.gatt.disconnect();
+      else this.cleanup();
+    }
+    cleanup() {
+      var _a4, _b2, _c;
+      (_a4 = this.notifyChar) == null ? void 0 : _a4.removeEventListener("characteristicvaluechanged", this.onNotify);
+      (_b2 = this.device) == null ? void 0 : _b2.removeEventListener("gattserverdisconnected", this.onGattDisconnected);
+      this.device = null;
+      this.controller = null;
+      this.writeChar = null;
+      this.notifyChar = null;
+      this.current = null;
+      this.collecting = null;
+      (_c = this.authWait) == null ? void 0 : _c.reject(new Error("penna disconnessa"));
+      this.authWait = null;
+      const ws = this.waiters;
+      this.waiters = [];
+      for (const w of ws) w.resolve({ type: -1, args: null });
+      this.status = { state: "disconnesso", name: this.status.name };
+      this.emit("status", this.status);
+    }
+    inputPassword(pw) {
+      var _a4;
+      (_a4 = this.controller) == null ? void 0 : _a4.InputPassword(pw);
+    }
+    // ---------------------------------------------------------------- messaggi SDK
+    /** Aspetta un messaggio della penna che soddisfi `match` (type -1 = disconnessa, -2 = tempo scaduto). */
+    waitMsg(match, ms) {
+      return new Promise((resolve) => {
+        const w = {
+          match,
+          resolve: (v) => {
+            window.clearTimeout(timer2);
+            this.waiters = this.waiters.filter((x2) => x2 !== w);
+            resolve(v);
+          }
+        };
+        const timer2 = window.setTimeout(() => w.resolve({ type: -2, args: null }), ms);
+        this.waiters.push(w);
+      });
+    }
+    onMessage(type, args) {
+      var _a4, _b2, _c, _d, _e, _f;
+      switch (type) {
+        case PenMessageType_default.PEN_SETTING_INFO:
+          this.setStatus({
+            battery: args == null ? void 0 : args.Battery,
+            usedMemory: args == null ? void 0 : args.UsedMem,
+            maxForce: args == null ? void 0 : args.MaxForce
+          });
+          break;
+        case PenMessageType_default.PEN_PASSWORD_REQUEST:
+          this.log("La penna \xE8 protetta da password.");
+          this.emit("passwordRequest", { retry: (_a4 = args == null ? void 0 : args.RetryCount) != null ? _a4 : 0, reset: (_b2 = args == null ? void 0 : args.ResetCount) != null ? _b2 : 0 });
+          break;
+        case PenMessageType_default.PEN_AUTHORIZED: {
+          const info = (_c = this.controller) == null ? void 0 : _c.info;
+          this.log(
+            `Penna collegata${(info == null ? void 0 : info.DeviceName) ? `: ${info.DeviceName}` : ""}${(info == null ? void 0 : info.FirmwareVersion) ? ` (firmware ${info.FirmwareVersion})` : ""}.`
+          );
+          (_d = this.controller) == null ? void 0 : _d.SetRtcTime();
+          if (this.live) (_e = this.controller) == null ? void 0 : _e.RequestAvailableNotes(null, null, null);
+          this.setStatus({ state: "connesso" });
+          (_f = this.authWait) == null ? void 0 : _f.resolve();
+          this.authWait = null;
+          break;
+        }
+        case PenMessageType_default.EVENT_LOW_BATTERY:
+          this.log(`Batteria scarica: ${args}%`);
+          this.setStatus({ battery: args });
+          break;
+        case PenMessageType_default.EVENT_POWER_OFF:
+          this.log("La penna si \xE8 spenta.");
+          break;
+        case PenMessageType_default.PEN_CONNECTION_FAILURE_BTDUPLICATE:
+          this.log("La penna risulta gi\xE0 collegata a un altro dispositivo.");
+          break;
+        case PenMessageType_default.OFFLINE_DATA_SEND_SUCCESS:
+          this.onOfflineStrokes(args != null ? args : []);
+          break;
+        case PenMessageType_default.OFFLINE_DATA_SEND_STATUS: {
+          const percent = Math.min(100, Math.round(Number(args) || 0));
+          if (this.collectKey) this.emit("offlineProgress", { note: this.collectKey.note, page: this.collectKey.page, percent });
+          break;
+        }
+        default:
+          break;
+      }
+      for (const w of [...this.waiters]) {
+        if (w.match(type, args)) {
+          w.resolve({ type, args });
+          break;
+        }
+      }
+    }
+    // ---------------------------------------------------------------- tratti live
+    // Attenzione all'SDK: il PEN_DOWN è un punto "segnaposto" con x = y = -1 e arriva
+    // PRIMA dell'informazione sulla pagina (che può ancora essere -1 o quella vecchia).
+    // Le coordinate vere e la pagina giusta arrivano con i PEN_MOVE; il PEN_UP è una
+    // copia dell'ultimo punto. Quindi: chiave e punti si prendono solo dai MOVE validi.
+    onDot(dot) {
+      var _a4, _b2, _c, _d;
+      const type = dot.dotType;
+      if (type === DOT_DOWN) {
+        this.finishCurrentStroke();
+        this.current = {
+          key: { section: -1, owner: -1, note: -1, page: -1 },
+          stroke: { t: dot.timeStamp || Date.now(), tip: (_a4 = dot.penTipType) != null ? _a4 : 0, color: (_b2 = dot.color) != null ? _b2 : 0, pts: [] }
+        };
+        return;
+      }
+      if (type === DOT_UP) {
+        this.finishCurrentStroke();
+        return;
+      }
+      if (type !== DOT_MOVE) return;
+      const key = keyOf(dot);
+      if (!validKey(key) || !(dot.x >= 0 && dot.y >= 0)) return;
+      if (!this.current) {
+        this.current = {
+          key,
+          stroke: { t: dot.timeStamp || Date.now(), tip: (_c = dot.penTipType) != null ? _c : 0, color: (_d = dot.color) != null ? _d : 0, pts: [] }
+        };
+      }
+      const first = this.current.stroke.pts.length === 0;
+      this.current.key = key;
+      this.current.stroke.pts.push(dot.x, dot.y, dot.f);
+      this.emit("dot", { key, x: dot.x, y: dot.y, f: dot.f, type: first ? DOT_DOWN : DOT_MOVE });
+    }
+    finishCurrentStroke() {
+      const cur = this.current;
+      this.current = null;
+      if (cur && validKey(cur.key) && cur.stroke.pts.length >= 3) {
+        this.emit("dot", { key: cur.key, x: 0, y: 0, f: 0, type: DOT_UP });
+        this.emit("stroke", { key: cur.key, stroke: cur.stroke, source: "live" });
+      }
+    }
+    // ---------------------------------------------------------------- memoria della penna
+    /** Elenco delle pagine salvate nella memoria della penna. */
+    async listMemory() {
+      var _a4;
+      const c = this.controller;
+      if (!c || !this.isConnected) throw new Error("penna non collegata");
+      const wNotes = this.waitMsg((t) => t === PenMessageType_default.OFFLINE_DATA_NOTE_LIST, 1e4);
+      c.RequestOfflineNoteList(0, 0);
+      const notes = (await wNotes).args;
+      if (!Array.isArray(notes)) throw new Error("la penna non ha mandato l'elenco dei quaderni");
+      const out = [];
+      for (const n of notes) {
+        const wPages = this.waitMsg(
+          (t, a) => t === PenMessageType_default.OFFLINE_DATA_PAGE_LIST && (a == null ? void 0 : a.Note) === n.Note && (a == null ? void 0 : a.Owner) === n.Owner,
+          1e4
+        );
+        c.RequestOfflinePageList(n.Section, n.Owner, n.Note);
+        const r = await wPages;
+        if (r.type === -1) throw new Error("penna disconnessa");
+        const pages = Array.isArray((_a4 = r.args) == null ? void 0 : _a4.Pages) ? r.args.Pages : [];
+        for (const page of pages) out.push({ section: n.Section, owner: n.Owner, note: n.Note, page });
+      }
+      return out.filter(validKey).sort((a, b) => a.note - b.note || a.page - b.page);
+    }
+    /**
+     * Scarica una pagina dalla memoria della penna SENZA cancellarla.
+     * Se `decide` risponde false (pagina invariata), il trasferimento viene interrotto subito.
+     */
+    async downloadPage(key, decide) {
+      var _a4, _b2, _c;
+      const c = this.controller;
+      if (!c || !this.isConnected) throw new Error("penna non collegata");
+      const isStart = (t) => t === PenMessageType_default.OFFLINE_DATA_SEND_START || t === PenMessageType_default.OFFLINE_DATA_SEND_FAILURE;
+      const wStart = this.waitMsg(isStart, 1e4);
+      c.abortOfflineTransfer = false;
+      this.collecting = [];
+      this.collectKey = key;
+      try {
+        c.RequestOfflineData(key.section, key.owner, key.note, false, [key.page]);
+        const first = await wStart;
+        if (first.type === -1) throw new Error("penna disconnessa");
+        if (first.type !== PenMessageType_default.OFFLINE_DATA_SEND_START) return { key, count: 0, strokes: [] };
+        const count = Number((_a4 = first.args) == null ? void 0 : _a4.stroke);
+        const known = Number.isFinite(count) ? count : -1;
+        const size = Number((_b2 = first.args) == null ? void 0 : _b2.bytes);
+        const bytes = Number.isFinite(size) ? size : -1;
+        const done = (t, a) => t === PenMessageType_default.OFFLINE_DATA_SEND_STATUS && Number(a) >= 100 || t === PenMessageType_default.OFFLINE_DATA_SEND_FAILURE;
+        if (decide && !decide(known, bytes)) {
+          c.abortOfflineTransfer = true;
+          await this.waitMsg(done, 8e3);
+          await sleep(400);
+          return null;
+        }
+        for (; ; ) {
+          const r = await this.waitMsg((t, a) => done(t, a) || t === PenMessageType_default.OFFLINE_DATA_SEND_STATUS, 15e3);
+          if (r.type === -1) throw new Error("penna disconnessa durante lo scaricamento");
+          if (r.type === -2) throw new Error(`la penna ha smesso di mandare la pagina ${key.page}`);
+          if (done(r.type, r.args)) break;
+        }
+        await sleep(250);
+        const strokes = ((_c = this.collecting) != null ? _c : []).sort((a, b) => a.t - b.t);
+        return { key, count: known, bytes, strokes };
+      } finally {
+        c.abortOfflineTransfer = false;
+        this.collecting = null;
+        this.collectKey = null;
+      }
+    }
+    /**
+     * Sincronizzazione: legge l'elenco delle pagine nella penna e scarica solo quelle cambiate
+     * (più quelle chieste da `plan.extra`). Non cancella nulla dalla penna.
+     */
+    async sync(plan) {
+      var _a4, _b2;
+      this.setStatus({ state: "scaricamento" });
+      try {
+        const memory = await this.listMemory();
+        const downloaded = [];
+        let skipped = 0;
+        for (const key of memory) {
+          const r = await this.downloadPage(key, (count, bytes) => plan.shouldDownload(key, count, bytes));
+          if (r) downloaded.push(r);
+          else skipped++;
+        }
+        const have = new Set(downloaded.map((d) => pageId(d.key)));
+        const inPen = new Set(memory.map(pageId));
+        for (const key of (_b2 = (_a4 = plan.extra) == null ? void 0 : _a4.call(plan, downloaded.map((d) => d.key))) != null ? _b2 : []) {
+          const id = pageId(key);
+          if (have.has(id) || !inPen.has(id)) continue;
+          const r = await this.downloadPage(key);
+          if (r) {
+            downloaded.push(r);
+            have.add(id);
+            skipped--;
+          }
+        }
+        return { memory, downloaded, skipped: Math.max(0, skipped) };
+      } finally {
+        if (this.controller) this.setStatus({ state: "connesso" });
+      }
+    }
+    /** Cancella dalla memoria della penna le pagine indicate. */
+    async deletePages(keys) {
+      const c = this.controller;
+      if (!c || !this.isConnected) throw new Error("penna non collegata");
+      const byNote = /* @__PURE__ */ new Map();
+      for (const k of keys) {
+        const nk = `${k.section}_${k.owner}_${k.note}`;
+        if (!byNote.has(nk)) byNote.set(nk, { s: k.section, o: k.owner, n: k.note, pages: [] });
+        byNote.get(nk).pages.push(k.page);
+      }
+      let deleted = 0;
+      this.setStatus({ state: "scaricamento" });
+      try {
+        for (const g of byNote.values()) {
+          const wStart = this.waitMsg(
+            (t) => t === PenMessageType_default.OFFLINE_DATA_SEND_START || t === PenMessageType_default.OFFLINE_DATA_SEND_FAILURE,
+            1e4
+          );
+          c.RequestOfflineData(g.s, g.o, g.n, true, g.pages);
+          const first = await wStart;
+          if (first.type === -1) throw new Error("penna disconnessa");
+          if (first.type === PenMessageType_default.OFFLINE_DATA_SEND_START) {
+            for (; ; ) {
+              const r = await this.waitMsg((t) => t === PenMessageType_default.OFFLINE_DATA_SEND_STATUS || t === PenMessageType_default.OFFLINE_DATA_SEND_FAILURE, 15e3);
+              if (r.type < 0) throw new Error("la penna non ha completato la cancellazione");
+              if (r.type === PenMessageType_default.OFFLINE_DATA_SEND_FAILURE || Number(r.args) >= 100) break;
+            }
+            await sleep(400);
+          }
+          deleted += g.pages.length;
+        }
+        return deleted;
+      } finally {
+        if (this.controller) this.setStatus({ state: "connesso" });
+      }
+    }
+    onOfflineStrokes(strokes) {
+      var _a4, _b2, _c;
+      if (!this.collecting) return;
+      for (const s of strokes) {
+        const dots = (_a4 = s.Dots) != null ? _a4 : [];
+        if (!dots.length) continue;
+        const first = dots[0];
+        const stroke = {
+          t: first.timeStamp || 0,
+          tip: (_b2 = first.penTipType) != null ? _b2 : 0,
+          color: (_c = first.color) != null ? _c : 0,
+          pts: []
+        };
+        for (const d of dots) stroke.pts.push(d.x, d.y, d.f);
+        stroke.pts = cleanPts(stroke.pts);
+        const key = keyOf(first);
+        if (!validKey(key) || stroke.pts.length < 3) continue;
+        if (this.collectKey && !sameKey(key, this.collectKey)) continue;
+        this.collecting.push(stroke);
+      }
+    }
+  };
+  function withTimeout(p, ms, msg) {
+    return new Promise((resolve, reject) => {
+      const t = window.setTimeout(() => reject(new Error(msg)), ms);
+      p.then(
+        (v) => {
+          window.clearTimeout(t);
+          resolve(v);
+        },
+        (e) => {
+          window.clearTimeout(t);
+          reject(e);
+        }
+      );
+    });
+  }
+
+  // test.ts
+  var $ = (id) => document.getElementById(id);
+  var LOG_KEY = "neopen-prova-registro";
+  var COUNT_KEY = "neopen-prova-conteggi";
+  var store = {
+    get(k) {
+      try {
+        return localStorage.getItem(k);
+      } catch (e) {
+        return null;
+      }
+    },
+    set(k, v) {
+      try {
+        localStorage.setItem(k, v);
+      } catch (e) {
+      }
+    }
+  };
+  var _a2;
+  var lines = JSON.parse((_a2 = store.get(LOG_KEY)) != null ? _a2 : "[]");
+  var show = () => {
+    $("log").textContent = lines.slice().reverse().join("\n");
+  };
+  var log2 = (m) => {
+    const t = (/* @__PURE__ */ new Date()).toLocaleTimeString("it-IT");
+    lines.push(`${t}  ${m}`);
+    if (lines.length > 600) lines = lines.slice(-600);
+    store.set(LOG_KEY, JSON.stringify(lines));
+    show();
+  };
+  var status = (m) => $("status").textContent = m;
+  var chooser = { available: true, cancel() {
+  }, setQuiet() {
+  }, dispose() {
+  } };
+  var pen = new PenConnection(chooser);
+  pen.on("log", (m) => log2(`penna: ${m}`));
+  pen.on("status", (s) => status(`${s.state}${s.name ? " \xB7 " + s.name : ""}`));
+  pen.on("passwordRequest", () => log2("la penna chiede la password (questa prova non la gestisce)"));
+  var _a3;
+  var counts = JSON.parse((_a3 = store.get(COUNT_KEY)) != null ? _a3 : "{}");
+  var busy = false;
+  var timer = null;
+  var lastBeat = Date.now();
+  var everyMs = 6e4;
+  async function readMemory() {
+    const pages = await pen.listMemory();
+    let changed = 0;
+    for (const key of pages) {
+      const id = pageId(key);
+      const got = await pen.downloadPage(key, (count) => counts[id] !== count);
+      if (got) {
+        counts[id] = got.count;
+        changed++;
+        log2(`pagina ${key.note}/${key.page}: ${got.strokes.length} tratti letti`);
+      }
+    }
+    store.set(COUNT_KEY, JSON.stringify(counts));
+    log2(`memoria letta: ${pages.length} pagine, ${changed} cambiate`);
+  }
+  async function attempt(firstTime) {
+    var _a4;
+    if (busy) return;
+    busy = true;
+    try {
+      if (!pen.isConnected) await pen.connect(firstTime ? { scanMs: 3e4 } : { reuse: pen.hasKnownDevice, quiet: true, scanMs: 15e3 });
+      log2(`collegata (${document.visibilityState === "visible" ? "app davanti" : "app in BACKGROUND"})`);
+      await readMemory();
+    } catch (e) {
+      log2(`tentativo non riuscito (${document.visibilityState}): ${(_a4 = e == null ? void 0 : e.message) != null ? _a4 : e}`);
+    } finally {
+      try {
+        pen.disconnect();
+      } catch (e) {
+      }
+      busy = false;
+    }
+  }
+  function beat() {
+    const now = Date.now();
+    const late = now - lastBeat - everyMs;
+    lastBeat = now;
+    log2(`battito \xB7 ${document.visibilityState === "visible" ? "davanti" : "BACKGROUND"}${late > 15e3 ? ` \xB7 in ritardo di ${Math.round(late / 1e3)} s (iOS ha messo in pausa la pagina)` : ""}`);
+    void attempt(false);
+  }
+  $("connect").addEventListener("click", () => void attempt(true));
+  $("start").addEventListener("click", () => {
+    everyMs = Number($("every").value) * 1e3;
+    if (timer) window.clearInterval(timer);
+    lastBeat = Date.now();
+    timer = window.setInterval(beat, everyMs);
+    log2(`prova automatica avviata: un tentativo ogni ${everyMs / 1e3} s`);
+    $("start").textContent = "Prova automatica attiva \u2713";
+  });
+  $("copy").addEventListener("click", async () => {
+    const text = lines.join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      log2("registro copiato");
+    } catch (e) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      log2("registro copiato");
+    }
+  });
+  $("clear").addEventListener("click", () => {
+    lines = [];
+    store.set(LOG_KEY, "[]");
+    show();
+  });
+  document.addEventListener("visibilitychange", () => log2(`la pagina \xE8 ora ${document.visibilityState === "visible" ? "davanti" : "in background"}`));
+  window.addEventListener("pagehide", () => log2("pagina nascosta (pagehide)"));
+  window.addEventListener("pageshow", () => log2("pagina mostrata (pageshow)"));
+  log2(`pagina aperta \xB7 Web Bluetooth ${navigator.bluetooth ? "disponibile" : "NON disponibile (aprila in Bluefy)"}`);
+  show();
+})();
+
+</script>
+</body>
+</html>
