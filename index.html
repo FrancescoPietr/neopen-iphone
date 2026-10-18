@@ -4741,7 +4741,7 @@
     }
   };
   var SVC = ["000019f1-0000-1000-8000-00805f9b34fb", "4f99f138-9d53-5bfa-9e50-b147491afe68"];
-  var VERSION = "8";
+  var VERSION = "9";
   var LOG_KEY = "neopen-sync-registro";
   var _a2;
   var lines = JSON.parse((_a2 = store.get(LOG_KEY)) != null ? _a2 : "[]");
@@ -4841,7 +4841,30 @@
       return false;
     }
   }
+  async function wake(d) {
+    var _a5;
+    const watch = d.watchAdvertisements;
+    if (typeof watch !== "function") return log2("rintracciamento della penna non disponibile in questo Bluefy");
+    let heard = false;
+    const onAd = () => {
+      heard = true;
+    };
+    d.addEventListener("advertisementreceived", onAd);
+    try {
+      await limit(watch.call(d), 4e3, "rintracciamento");
+    } catch (e) {
+      log2(`rintracciamento: ${describeError(e)}`);
+    }
+    for (let i2 = 0; i2 < 12 && !heard; i2++) await new Promise((r) => window.setTimeout(r, 500));
+    log2(heard ? "penna rintracciata" : "penna non rintracciata (spenta o lontana?)");
+    d.removeEventListener("advertisementreceived", onAd);
+    try {
+      (_a5 = d.unwatchAdvertisements) == null ? void 0 : _a5.call(d);
+    } catch {
+    }
+  }
   async function readAndSend() {
+    if (!chosen) await wake(device);
     await limit(pen.connect({ device, quiet: true }), 45e3, "collegamento");
     log2(`collegata (${where()})`);
     const keys = await limit(pen.listMemory(), 3e4, "elenco pagine");
