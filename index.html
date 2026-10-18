@@ -4741,7 +4741,7 @@
     }
   };
   var SVC = ["000019f1-0000-1000-8000-00805f9b34fb", "4f99f138-9d53-5bfa-9e50-b147491afe68"];
-  var VERSION = "7";
+  var VERSION = "8";
   var LOG_KEY = "neopen-sync-registro";
   var _a2;
   var lines = JSON.parse((_a2 = store.get(LOG_KEY)) != null ? _a2 : "[]");
@@ -4849,7 +4849,7 @@
     let strokes = 0;
     for (const key of keys) {
       const id = pageId(key);
-      const read = () => limit(pen.downloadPage(key, (count) => sent[id] !== count), 9e4, `pagina ${key.note}/${key.page}`);
+      const read = () => limit(pen.downloadPage(key), 9e4, `pagina ${key.note}/${key.page}`);
       let got = await read();
       if (got && !got.strokes.length) {
         for (let i2 = 0; i2 < 2 && got && !got.strokes.length; i2++) {
@@ -4859,6 +4859,10 @@
         }
       }
       if (!got) continue;
+      if (got.strokes.length && sent[id] === got.count) {
+        log2(`pagina ${key.note}/${key.page}: invariata`);
+        continue;
+      }
       if (!got.strokes.length) {
         log2(`pagina ${key.note}/${key.page}: lettura vuota, la salto (riprovo al prossimo giro)`);
         continue;
