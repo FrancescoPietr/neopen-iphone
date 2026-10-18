@@ -4741,7 +4741,7 @@
     }
   };
   var SVC = ["000019f1-0000-1000-8000-00805f9b34fb", "4f99f138-9d53-5bfa-9e50-b147491afe68"];
-  var VERSION = "5";
+  var VERSION = "6";
   var LOG_KEY = "neopen-sync-registro";
   var _a2;
   var lines = JSON.parse((_a2 = store.get(LOG_KEY)) != null ? _a2 : "[]");
@@ -4851,6 +4851,10 @@
       const id = pageId(key);
       const got = await limit(pen.downloadPage(key, (count) => sent[id] !== count), 9e4, `pagina ${key.note}/${key.page}`);
       if (!got) continue;
+      if (!got.strokes.length) {
+        log2(`pagina ${key.note}/${key.page}: lettura vuota, la salto (riprovo al prossimo giro)`);
+        continue;
+      }
       show("work", "Invio le pagine al PC\u2026", `pagina ${key.note}/${key.page}`);
       const clean = got.strokes.map((s) => ({ t: s.t, tip: s.tip, color: s.color, pts: s.pts.map(round) }));
       await relay({ action: "put", pages: [{ id, count: got.count, strokes: clean }] });
