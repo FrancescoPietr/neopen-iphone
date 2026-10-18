@@ -4741,7 +4741,7 @@
     }
   };
   var SVC = ["000019f1-0000-1000-8000-00805f9b34fb", "4f99f138-9d53-5bfa-9e50-b147491afe68"];
-  var VERSION = "4";
+  var VERSION = "5";
   var LOG_KEY = "neopen-sync-registro";
   var _a2;
   var lines = JSON.parse((_a2 = store.get(LOG_KEY)) != null ? _a2 : "[]");
@@ -4809,10 +4809,11 @@
       const t = window.setTimeout(() => rej(new Error(`${what}: nessuna risposta in ${ms / 1e3} s`)), ms);
       p.then(
         (v) => (window.clearTimeout(t), res(v)),
-        (e) => (window.clearTimeout(t), rej(e))
+        (e) => (window.clearTimeout(t), rej(new Error(`${what}: ${describeError(e)}`)))
       );
     });
   }
+  var chosen = false;
   async function knownPen() {
     var _a5, _b2, _c, _d;
     if (device) return device;
@@ -4822,6 +4823,7 @@
         var _a6;
         return /neo|smartpen|m1/i.test((_a6 = d.name) != null ? _a6 : "");
       })) != null ? _d : null;
+      chosen = false;
       if (device) log2(`penna ricordata da Bluefy: \xAB${device.name}\xBB`);
     } catch {
     }
@@ -4831,6 +4833,7 @@
     var _a5;
     try {
       device = await navigator.bluetooth.requestDevice({ filters: SVC.map((s) => ({ services: [s] })), optionalServices: SVC });
+      chosen = true;
       log2(`penna scelta: \xAB${(_a5 = device.name) != null ? _a5 : "senza nome"}\xBB`);
       return true;
     } catch (e) {
@@ -4882,7 +4885,11 @@
     } catch (e) {
       const msg = describeError(e);
       log2(`non riuscito (${where()}): ${msg}`);
-      if (/non risponde|nessuna risposta|disconnected|NetworkError|GATT/i.test(msg)) show("warn", "Penna spenta o lontana", "Togli il tappo, poi riprova.");
+      if (!chosen) {
+        device = null;
+        $("choose").classList.remove("hide");
+        show("warn", "Non sono riuscito a collegarmi", "Accendi la penna (togli il tappo) e tocca \xABScegli la penna\xBB.");
+      } else if (/non risponde|nessuna risposta|disconnected|NetworkError|GATT/i.test(msg)) show("warn", "Penna spenta o lontana", "Togli il tappo, poi riprova.");
       else show("warn", "Non riuscito", msg);
     } finally {
       try {
